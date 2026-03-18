@@ -1,6 +1,7 @@
 package com.kiddotime.app.screens
 
 import android.content.Intent
+import android.util.Log
 import android.graphics.drawable.Drawable
 import android.provider.Settings
 import androidx.compose.foundation.Image
@@ -31,11 +32,13 @@ import com.kiddotime.app.viewmodel.ParentViewModel
 fun ParentScreen(viewModel: ParentViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-
     // Selected app for limit dialog
     var selectedApp by remember { mutableStateOf<AppUsageWithLimit?>(null) }
 
+    Log.d("KiddoTime", "ParentScreen composable loaded")
+
     LaunchedEffect(Unit) {
+        Log.d("KiddoTime", "LaunchedEffect triggered")
         viewModel.checkPermissionAndLoad()
     }
 
@@ -73,6 +76,14 @@ fun ParentScreen(viewModel: ParentViewModel = viewModel()) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Button(
+                    onClick = {
+                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Open Usage Access Settings")
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(uiState.appsWithLimits) { appWithLimit ->

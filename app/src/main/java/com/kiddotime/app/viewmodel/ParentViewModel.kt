@@ -1,6 +1,7 @@
 package com.kiddotime.app.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kiddotime.app.data.AppDatabase
@@ -37,9 +38,11 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
     fun checkPermissionAndLoad() {
         viewModelScope.launch {
             val hasPermission = usageStatsHelper.hasUsagePermission()
+            Log.d("KiddoTime", "Has permission: $hasPermission")
             if (hasPermission) {
                 loadUsageStats()
             } else {
+                Log.d("KiddoTime", "Permission not granted - showing prompt")
                 _uiState.value = _uiState.value.copy(hasPermission = false)
             }
         }
@@ -47,11 +50,14 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun loadUsageStats() {
         viewModelScope.launch {
+            Log.d("KiddoTime", "loadUsageStats() called")
             _uiState.value = _uiState.value.copy(isLoading = true)
             val stats = usageStatsHelper.getTodayUsageStats()
+            Log.d("KiddoTime", "Stats returned: ${stats.size} apps")
 
             // Combine live usage stats with live limits from database
             repository.allLimits.collect { limits ->
+                Log.d("KiddoTime", "Limits loaded: ${limits.size}")
                 val limitsMap = limits.associateBy { it.packageName }
                 val appsWithLimits = stats.map { appInfo ->
                     AppUsageWithLimit(
