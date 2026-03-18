@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
     private val limitReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val packageName = intent.getStringExtra(AppMonitorService.EXTRA_PACKAGE_NAME)
+            Log.d("KiddoTime", "Broadcast received in MainActivity for: $packageName")
             limitReachedState.value = packageName
         }
     }
