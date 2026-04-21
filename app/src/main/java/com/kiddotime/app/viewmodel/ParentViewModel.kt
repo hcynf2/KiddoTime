@@ -8,6 +8,7 @@ import com.kiddotime.app.data.AppDatabase
 import com.kiddotime.app.data.AppLimit
 import com.kiddotime.app.data.AppLimitRepository
 import com.kiddotime.app.data.AppUsageInfo
+import com.kiddotime.app.data.PinRepository
 import com.kiddotime.app.data.UsageStatsHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +23,10 @@ data class AppUsageWithLimit(
 data class ParentUiState(
     val hasPermission: Boolean = false,
     val appsWithLimits: List<AppUsageWithLimit> = emptyList(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val hasPin: Boolean = false,
+    val pinError: String? = null,
+    val pinSaved: Boolean = false
 )
 
 class ParentViewModel(application: Application) : AndroidViewModel(application) {
@@ -35,6 +39,7 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(ParentUiState())
     val uiState: StateFlow<ParentUiState> = _uiState
 
+    private val pinRepository = PinRepository(application)
     fun checkPermissionAndLoad() {
         viewModelScope.launch {
             val hasPermission = usageStatsHelper.hasUsagePermission()
@@ -45,7 +50,36 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
                 Log.d("KiddoTime", "Permission not granted - showing prompt")
                 _uiState.value = _uiState.value.copy(hasPermission = false)
             }
+            _uiState.value = _uiState.value.copy(hasPin = pinRepository.hasPin())
         }
+    }
+
+    fun savePin(pin: String) {
+        if (pin.length < 4){
+            _uiState.value = _uiState.value.copy(pinError = "Pin must be at least 4 digits.")
+            return
+        }
+        pinRepository.savePin(pin)
+        _uiState.value = _uiState.value.copy(
+            hasPin = true,
+            pinError = null,
+            pinSaved = true
+        )
+
+        // reset pinSaved after a moment
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(2000)
+            _uiState.value = _uiState.value.copy(pinSaved = false)
+        }
+    }
+
+    fun clearPin(){
+        pinRepository.clearPin()
+        _uiState.value = _uiState.value.copy(hasPin = false)
+    }
+
+    fun verifyPin(input: String): Boolean {
+        return pinRepository.verifyPin(input)
     }
 
     private fun loadUsageStats() {

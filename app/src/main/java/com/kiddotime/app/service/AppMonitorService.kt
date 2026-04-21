@@ -10,9 +10,13 @@ import com.kiddotime.app.data.AppDatabase
 import com.kiddotime.app.data.AppLimitRepository
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import com.kiddotime.app.overlay.OverlayService
 
 class AppMonitorService : Service() {
 
+private val isOverlayShowing = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private val unlockedApps = mutableSetOf<String>()
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var repository: AppLimitRepository
 
@@ -24,7 +28,7 @@ class AppMonitorService : Service() {
         const val ACTION_LIMIT_REACHED = "com.kiddotime.app.LIMIT_REACHED"
         const val EXTRA_PACKAGE_NAME = "package_name"
         const val EXTRA_APP_NAME = "app_name"
-        private const val POLL_INTERVAL_MS = 3000L // Check every 3 seconds
+        private const val POLL_INTERVAL_MS = 1000L // Check every 1 second
 
         fun start(context: Context) {
             val intent = Intent(context, AppMonitorService::class.java)
@@ -43,6 +47,15 @@ class AppMonitorService : Service() {
             AppDatabase.getDatabase(applicationContext).appLimitDao()
         )
         NotificationHelper.createNotificationChannel(this)
+        val filter = android.content.IntentFilter().apply {
+            addAction("com.kiddotime.app.OVERLAY_DISMISSED")
+            addAction("com.kiddotime.app.APP_UNLOCKED")
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(overlayDismissedReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(overlayDismissedReceiver, filter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -56,78 +69,120 @@ class AppMonitorService : Service() {
     }
 
     private fun startMonitoring() {
-        serviceScope.launch {
+        serviceScope.launch(Dispatchers.IO) {
             while (isActive) {
-                checkCurrentApp()
+                try {
+                    checkCurrentApp()
+                } catch (e: Exception) {
+                    Log.e("KiddoTime", "Monitor error: ${e.message}")
+                }
                 delay(POLL_INTERVAL_MS)
             }
         }
     }
 
     private suspend fun checkCurrentApp() {
+        val currentPackage = getForegroundApp() ?: return
+        if (currentPackage == packageName) return
 
-        val currentPackage = getForegroundApp()
-        Log.d("KiddoTime", "Foreground app: $currentPackage")
-
-        if (currentPackage == null) {
-            Log.d("KiddoTime", "Could not detect foreground app")
+        // If app is locked and child tries to open it, show lock screen immediately
+        if (currentPackage in lockedApps && !isOverlayShowing.get()) {
+            Log.d("KiddoTime", "Locked app opened - showing lock screen: $currentPackage")
+            isOverlayShowing.set(true)
+            val appName = lockedApps_names[currentPackage] ?: currentPackage
+            OverlayService.startLockScreen(this, appName, currentPackage)
             return
         }
 
-        if (currentPackage == packageName) return
+        // Skip monitoring if already showing overlay or app is unlocked
+        if (isOverlayShowing.get()) return
+        if (currentPackage in unlockedApps) return
+        if (currentPackage in lockedApps) return
 
+        // Get limit for current app
         val limits = repository.allLimits.first()
-        Log.d("KiddoTime", "Total limits set: ${limits.size}")
-        limits.forEach {
-            Log.d("KiddoTime", "Stored limit: ${it.packageName} = ${it.dailyLimitMs}ms")
-        }
+        val limit = limits.find { it.packageName == currentPackage } ?: return
 
-        val limit = limits.find { it.packageName == currentPackage }
-        Log.d("KiddoTime", "Limit for $currentPackage: ${limit?.dailyLimitMs}ms")
-
-        if (limit == null) return
-
+        // Get usage
         val usageMs = getAppUsageToday(currentPackage)
         Log.d("KiddoTime", "Usage for $currentPackage: ${usageMs}ms / limit: ${limit.dailyLimitMs}ms")
 
-       // if (usageMs >= limit.dailyLimitMs && currentPackage !in triggeredApps) {
-        if (usageMs >= limit.dailyLimitMs){
-            Log.d("KiddoTime", "LIMIT REACHED - broadcasting for $currentPackage")
-             triggeredApps.add(currentPackage)
+        if (usageMs >= limit.dailyLimitMs && currentPackage !in triggeredApps) {
+            Log.d("KiddoTime", "LIMIT REACHED - launching game for $currentPackage")
+            isOverlayShowing.set(true)
+            triggeredApps.add(currentPackage)
+            lockedApps.add(currentPackage)
+            lockedApps_names[currentPackage] = limit.appName
             broadcastLimitReached(currentPackage, limit.appName)
-        } else {
-            Log.d("KiddoTime", "Not triggering: usageMs=$usageMs, limit=${limit.dailyLimitMs}, alreadyTriggered=${currentPackage in triggeredApps}")
-        }
-
-        if (usageMs < limit.dailyLimitMs) {
-           triggeredApps.remove(currentPackage)
+        } else if (usageMs < limit.dailyLimitMs) {
+            triggeredApps.remove(currentPackage)
+            unlockedApps.remove(currentPackage)
         }
     }
 
+    // Store app names for locked apps
+    private val lockedApps_names = mutableMapOf<String, String>()
+
+    private val overlayDismissedReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+            when (intent.action) {
+                "com.kiddotime.app.OVERLAY_DISMISSED" -> {
+                    Log.d("KiddoTime", "Overlay dismissed - resetting")
+                    triggeredApps.clear()
+                    isOverlayShowing.set(false)
+                }
+                "com.kiddotime.app.APP_UNLOCKED" -> {
+                    val pkg = intent.getStringExtra("package_name") ?: return
+                    Log.d("KiddoTime", "App unlocked: $pkg")
+                    lockedApps.remove(pkg)
+                    lockedApps_names.remove(pkg)
+                    triggeredApps.remove(pkg)
+                    unlockedApps.add(pkg)
+                    isOverlayShowing.set(false)
+                }
+            }
+        }
+    }
+
+    private val lockedApps = mutableSetOf<String>()
 
     private fun getForegroundApp(): String? {
         val usageStatsManager =
             getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val now = System.currentTimeMillis()
 
-        // Query a longer window - last 60 seconds instead of 5
-        val stats = usageStatsManager.queryUsageStats(
-            UsageStatsManager.INTERVAL_BEST,
-            now - 60000,
-            now
-        )
+        // Use queryEvents for most accurate foreground detection on Samsung
+        val events = usageStatsManager.queryEvents(now - 10000, now)
+        val event = android.app.usage.UsageEvents.Event()
 
-        if (stats.isNullOrEmpty()) {
-            Log.d("KiddoTime", "Usage stats empty - permission may not be granted")
-            return null
+        var lastPackage: String? = null
+        var lastTime = 0L
+
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED) {
+                if (event.timeStamp > lastTime) {
+                    lastTime = event.timeStamp
+                    lastPackage = event.packageName
+                }
+            }
         }
 
-        val foreground = stats
-            .filter { it.totalTimeInForeground > 0 }
-            .maxByOrNull { it.lastTimeUsed }
+        // Fallback to queryUsageStats if events return nothing
+        if (lastPackage == null) {
+            val stats = usageStatsManager.queryUsageStats(
+                UsageStatsManager.INTERVAL_BEST,
+                now - 10000,
+                now
+            )
+            lastPackage = stats
+                ?.filter { it.lastTimeUsed > 0 }
+                ?.maxByOrNull { it.lastTimeUsed }
+                ?.packageName
+        }
 
-        Log.d("KiddoTime", "Most recent app: ${foreground?.packageName}, lastUsed: ${foreground?.lastTimeUsed}")
-        return foreground?.packageName
+        Log.d("KiddoTime", "Foreground app detected: $lastPackage")
+        return lastPackage
     }
 
     private fun getAppUsageToday(packageName: String): Long {
@@ -177,14 +232,8 @@ class AppMonitorService : Service() {
     }
 
     private fun broadcastLimitReached(packageName: String, appName: String) {
-        // Send a broadcast that MainActivity will listen for
-        Log.d("KiddoTime", "Sending broadcast for $packageName")
-        val intent = Intent(ACTION_LIMIT_REACHED).apply {
-            putExtra(EXTRA_PACKAGE_NAME, packageName)
-            putExtra(EXTRA_APP_NAME, appName)
-            setPackage(this@AppMonitorService.packageName)
-        }
-        sendBroadcast(intent)
+        Log.d("KiddoTime", "Calling OverlayService.start with appName=$appName, package=$packageName")
+        OverlayService.start(this, appName, packageName)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

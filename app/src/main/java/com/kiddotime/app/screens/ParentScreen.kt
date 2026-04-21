@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.kiddotime.app.data.AppUsageInfo
 import com.kiddotime.app.viewmodel.AppUsageWithLimit
 import com.kiddotime.app.viewmodel.ParentViewModel
@@ -71,21 +73,36 @@ fun ParentScreen(viewModel: ParentViewModel = viewModel()) {
             }
 
             else -> {
-                Text(
-                    text = "Tap an app to set a time limit",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Button(
-                    onClick = {
-                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Open Usage Access Settings")
-                }
-                Spacer(modifier = Modifier.height(8.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+                    // PIN setup at the top
+                    item {
+                        PinSetupSection(
+                            hasPin = uiState.hasPin,
+                            pinError = uiState.pinError,
+                            pinSaved = uiState.pinSaved,
+                            onSavePin = { viewModel.savePin(it) },
+                            onClearPin = { viewModel.clearPin() }
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Open Usage Access Settings")
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Tap an app to set a time limit",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+
+                    // App list
                     items(uiState.appsWithLimits) { appWithLimit ->
                         AppUsageRow(
                             appWithLimit = appWithLimit,
@@ -295,6 +312,130 @@ fun AppIcon(drawable: Drawable?) {
     } else {
         Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
             Text("?")
+        }
+    }
+}
+
+@Composable
+fun PinSetupSection(
+    hasPin: Boolean,
+    pinError: String?,
+    pinSaved: Boolean,
+    onSavePin: (String) -> Unit,
+    onClearPin: () -> Unit
+) {
+    var pinInput by remember { mutableStateOf("") }
+    var confirmPin by remember { mutableStateOf("") }
+    var isChangingPin by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    Icons.Outlined.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Parent PIN",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (hasPin && !isChangingPin) {
+                    TextButton(onClick = { isChangingPin = true }) {
+                        Text("Change")
+                    }
+                    TextButton(onClick = onClearPin) {
+                        Text("Remove", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (!hasPin || isChangingPin) {
+                Text(
+                    text = "Set a PIN to unlock apps after the game.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = pinInput,
+                    onValueChange = { if (it.length <= 6) pinInput = it.filter { c -> c.isDigit() } },
+                    label = { Text("Enter PIN") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = confirmPin,
+                    onValueChange = { if (it.length <= 6) confirmPin = it.filter { c -> c.isDigit() } },
+                    label = { Text("Confirm PIN") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = confirmPin.isNotEmpty() && pinInput != confirmPin
+                )
+
+                if (pinError != null) {
+                    Text(
+                        text = pinError,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Button(
+                    onClick = {
+                        if (pinInput == confirmPin) {
+                            onSavePin(pinInput)
+                            pinInput = ""
+                            confirmPin = ""
+                            isChangingPin = false
+                        }
+                    },
+                    enabled = pinInput.length >= 4 && pinInput == confirmPin,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isChangingPin) "Update PIN" else "Save PIN")
+                }
+
+            } else {
+                // PIN is set
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "✅ PIN is set",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (pinSaved) {
+                    Text(
+                        text = "PIN saved successfully!",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
         }
     }
 }

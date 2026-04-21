@@ -7,6 +7,8 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
 import androidx.activity.ComponentActivity
@@ -51,6 +53,15 @@ class MainActivity : ComponentActivity() {
 
         // Start background monitoring service
         AppMonitorService.start(this)
+
+
+        if (!Settings.canDrawOverlays(this)) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        }
 
         // Listen for limit reached broadcasts
         val filter = IntentFilter(AppMonitorService.ACTION_LIMIT_REACHED)
