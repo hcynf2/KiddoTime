@@ -4,8 +4,19 @@ import android.app.Service
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
+import android.view.Gravity
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.kiddotime.app.data.AppDatabase
 import com.kiddotime.app.data.AppLimitRepository
 import kotlinx.coroutines.*
@@ -14,15 +25,20 @@ import com.kiddotime.app.overlay.OverlayService
 
 class AppMonitorService : Service() {
 
-private val isOverlayShowing = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val isOverlayShowing = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val unlockedApps = mutableSetOf<String>()
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var repository: AppLimitRepository
+    private lateinit var windowManager: WindowManager
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var warningOverlayView: FrameLayout? = null
 
     // Track which apps have already triggered the limit this session
     // so we don't spam the overlay repeatedly
     private val triggeredApps = mutableSetOf<String>()
+    private val halfTimeWarningShown = mutableSetOf<String>()
+    private val eighthTimeWarningShown = mutableSetOf<String>()
 
     companion object {
         const val ACTION_LIMIT_REACHED = "com.kiddotime.app.LIMIT_REACHED"
@@ -46,6 +62,7 @@ private val isOverlayShowing = java.util.concurrent.atomic.AtomicBoolean(false)
         repository = AppLimitRepository(
             AppDatabase.getDatabase(applicationContext).appLimitDao()
         )
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         NotificationHelper.createNotificationChannel(this)
         val filter = android.content.IntentFilter().apply {
             addAction("com.kiddotime.app.OVERLAY_DISMISSED")
@@ -109,12 +126,28 @@ private val isOverlayShowing = java.util.concurrent.atomic.AtomicBoolean(false)
 
         if (usageMs >= limit.dailyLimitMs && currentPackage !in triggeredApps) {
             Log.d("KiddoTime", "LIMIT REACHED - launching game for $currentPackage")
+            dismissWarning()
             isOverlayShowing.set(true)
             triggeredApps.add(currentPackage)
             lockedApps.add(currentPackage)
             lockedApps_names[currentPackage] = limit.appName
             broadcastLimitReached(currentPackage, limit.appName)
         } else if (usageMs < limit.dailyLimitMs) {
+            val remainingMs = limit.dailyLimitMs - usageMs
+            val eighthThreshold = limit.dailyLimitMs * 7 / 8
+            val halfThreshold = limit.dailyLimitMs / 2
+
+            if (usageMs >= eighthThreshold && currentPackage !in eighthTimeWarningShown) {
+                Log.d("KiddoTime", "One-eighth time warning for $currentPackage (${remainingMs}ms left)")
+                eighthTimeWarningShown.add(currentPackage)
+                halfTimeWarningShown.add(currentPackage) // prevent double-warn
+                showTimeWarning(limit.appName, remainingMs)
+            } else if (usageMs >= halfThreshold && currentPackage !in halfTimeWarningShown) {
+                Log.d("KiddoTime", "Half time warning for $currentPackage (${remainingMs}ms left)")
+                halfTimeWarningShown.add(currentPackage)
+                showTimeWarning(limit.appName, remainingMs)
+            }
+
             triggeredApps.remove(currentPackage)
             unlockedApps.remove(currentPackage)
         }
@@ -137,6 +170,8 @@ private val isOverlayShowing = java.util.concurrent.atomic.AtomicBoolean(false)
                     lockedApps.remove(pkg)
                     lockedApps_names.remove(pkg)
                     triggeredApps.remove(pkg)
+                    halfTimeWarningShown.remove(pkg)
+                    eighthTimeWarningShown.remove(pkg)
                     unlockedApps.add(pkg)
                     isOverlayShowing.set(false)
                 }
@@ -231,6 +266,114 @@ private val isOverlayShowing = java.util.concurrent.atomic.AtomicBoolean(false)
         return totalTime
     }
 
+    private fun formatTimeRemaining(ms: Long): String {
+        val totalSeconds = ms / 1000
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+        return when {
+            minutes >= 60 -> "${minutes / 60}h ${minutes % 60}m"
+            minutes > 0 -> "$minutes minute${if (minutes == 1L) "" else "s"}"
+            else -> "$seconds second${if (seconds == 1L) "" else "s"}"
+        }
+    }
+
+    private fun showTimeWarning(appName: String, remainingMs: Long) {
+        mainHandler.post {
+            if (warningOverlayView != null) dismissWarning()
+
+            val ctx = applicationContext
+            val container = FrameLayout(ctx).apply {
+                setBackgroundColor(Color.argb(180, 0, 0, 0))
+                isClickable = true
+                isFocusable = true
+            }
+
+            val card = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setBackgroundColor(Color.rgb(25, 35, 75))
+                setPadding(72, 64, 72, 64)
+            }
+
+            card.addView(TextView(ctx).apply {
+                text = "⏰"
+                textSize = 52f
+                gravity = Gravity.CENTER
+            })
+
+            card.addView(TextView(ctx).apply {
+                text = "Time Warning"
+                textSize = 22f
+                setTextColor(Color.WHITE)
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                gravity = Gravity.CENTER
+                setPadding(0, 20, 0, 12)
+            })
+
+            card.addView(TextView(ctx).apply {
+                text = "You have ${formatTimeRemaining(remainingMs)} left\nfor $appName"
+                textSize = 17f
+                setTextColor(Color.argb(220, 200, 220, 255))
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, 40)
+            })
+
+            card.addView(Button(ctx).apply {
+                text = "OK, Got It!"
+                textSize = 16f
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(60, 100, 210))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { gravity = Gravity.CENTER_HORIZONTAL }
+                setOnClickListener { dismissWarning() }
+            })
+
+            container.addView(card, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            ).apply { setMargins(64, 0, 64, 0) })
+
+            warningOverlayView = container
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 0
+                y = 0
+            }
+
+            try {
+                windowManager.addView(container, params)
+                Log.d("KiddoTime", "Time warning shown for $appName (${formatTimeRemaining(remainingMs)} left)")
+            } catch (e: Exception) {
+                Log.e("KiddoTime", "Failed to show time warning: ${e.message}")
+                warningOverlayView = null
+            }
+        }
+    }
+
+    private fun dismissWarning() {
+        mainHandler.post {
+            warningOverlayView?.let {
+                try {
+                    windowManager.removeView(it)
+                } catch (e: Exception) {
+                    Log.e("KiddoTime", "Failed to dismiss warning: ${e.message}")
+                }
+                warningOverlayView = null
+            }
+        }
+    }
+
     private fun broadcastLimitReached(packageName: String, appName: String) {
         Log.d("KiddoTime", "Calling OverlayService.start with appName=$appName, package=$packageName")
         OverlayService.start(this, appName, packageName)
@@ -241,5 +384,6 @@ private val isOverlayShowing = java.util.concurrent.atomic.AtomicBoolean(false)
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
+        dismissWarning()
     }
 }
