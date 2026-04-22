@@ -35,6 +35,11 @@ class AppMonitorService : Service() {
     private lateinit var repository: AppLimitRepository
     private lateinit var bedtimeRepo: BedtimeRepository
     private lateinit var limitEventRepo: com.kiddotime.app.data.LimitEventRepository
+    private lateinit var starRepo: com.kiddotime.app.data.StarRepository
+
+    // Tracks when each package's limit fired this session (packageName → timestamp).
+    // Used to determine on-time eligibility when the overlay is dismissed.
+    private val limitFiredAt = mutableMapOf<String, Long>()
     private lateinit var windowManager: WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private var warningOverlayView: FrameLayout? = null
@@ -70,6 +75,7 @@ class AppMonitorService : Service() {
         val db = AppDatabase.getDatabase(applicationContext)
         repository = AppLimitRepository(db.appLimitDao())
         limitEventRepo = com.kiddotime.app.data.LimitEventRepository(db.limitEventDao())
+        starRepo = com.kiddotime.app.data.StarRepository(applicationContext)
         bedtimeRepo = BedtimeRepository(applicationContext)
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         NotificationHelper.createNotificationChannel(this)
@@ -156,6 +162,7 @@ class AppMonitorService : Service() {
             lockedApps.add(currentPackage)
             lockedApps_names[currentPackage] = limit.appName
             val limitReachedAt = System.currentTimeMillis()
+            limitFiredAt[currentPackage] = limitReachedAt
             serviceScope.launch {
                 limitEventRepo.recordLimitReached(currentPackage, limit.appName, limitReachedAt)
             }
@@ -273,6 +280,13 @@ class AppMonitorService : Service() {
                     if (pkg != null) {
                         val closedAt = System.currentTimeMillis()
                         serviceScope.launch { limitEventRepo.recordAppClosed(pkg, closedAt) }
+                        val firedAt = limitFiredAt.remove(pkg)
+                        if (firedAt != null &&
+                            closedAt - firedAt <= com.kiddotime.app.data.LimitEventRepository.ON_TIME_THRESHOLD_MS
+                        ) {
+                            starRepo.addStar()
+                            Log.d("KiddoTime", "⭐ Star awarded for on-time stop: $pkg (${closedAt - firedAt}ms)")
+                        }
                     }
                     triggeredApps.clear()
                     isOverlayShowing.set(false)
