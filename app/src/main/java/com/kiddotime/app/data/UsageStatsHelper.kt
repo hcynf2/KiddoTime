@@ -110,4 +110,102 @@ class UsageStatsHelper(private val context: Context) {
             else -> "< 1m"
         }
     }
+
+    /** Total screen time for yesterday (midnight-to-midnight). */
+    fun getYesterdayTotal(): Long {
+        val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val startOfYesterday = startOfToday - 24 * 60 * 60 * 1000L
+        return usageStatsManager.queryUsageStats(
+            UsageStatsManager.INTERVAL_DAILY, startOfYesterday, startOfToday
+        )?.sumOf { it.totalTimeInForeground } ?: 0L
+    }
+
+    /**
+     * Average total daily screen time over the last 7 complete days.
+     * Groups INTERVAL_DAILY entries by their day bucket and averages across days
+     * that had any activity.
+     */
+    fun get7DayDailyAverage(): Long {
+        val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val sevenDaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000L
+        val stats = usageStatsManager.queryUsageStats(
+            UsageStatsManager.INTERVAL_DAILY, sevenDaysAgo, startOfToday
+        ) ?: return 0L
+        val msPerDay = 24L * 60 * 60 * 1000
+        val dailyTotals = stats
+            .groupBy { it.firstTimeStamp / msPerDay }
+            .mapValues { (_, list) -> list.sumOf { it.totalTimeInForeground } }
+        return if (dailyTotals.isNotEmpty()) dailyTotals.values.sum() / dailyTotals.size else 0L
+    }
+
+    /**
+     * Returns (packageName, durationMs) of the single longest unbroken app session today,
+     * derived from ACTIVITY_RESUMED / ACTIVITY_PAUSED events.
+     */
+    fun getLongestSessionToday(): Pair<String, Long>? {
+        val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val startOfDay = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val now = System.currentTimeMillis()
+        val events = usageStatsManager.queryEvents(startOfDay, now)
+        val event = android.app.usage.UsageEvents.Event()
+        val resumeMap = mutableMapOf<String, Long>()
+        val longestMap = mutableMapOf<String, Long>()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            when (event.eventType) {
+                android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED ->
+                    resumeMap[event.packageName] = event.timeStamp
+                android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED -> {
+                    val start = resumeMap.remove(event.packageName) ?: continue
+                    val dur = event.timeStamp - start
+                    if (dur > (longestMap[event.packageName] ?: 0L))
+                        longestMap[event.packageName] = dur
+                }
+            }
+        }
+        // Include any currently open app
+        resumeMap.forEach { (pkg, start) ->
+            val dur = now - start
+            if (dur > (longestMap[pkg] ?: 0L)) longestMap[pkg] = dur
+        }
+        val pm = context.packageManager
+        return longestMap
+            .filter { pm.getLaunchIntentForPackage(it.key) != null }
+            .maxByOrNull { it.value }
+            ?.toPair()
+    }
+
+    /**
+     * Returns (packageName, totalMs) of the most-used launchable app over the last 7 days
+     * (including today).
+     */
+    fun getWeeklyTopApp(): Pair<String, Long>? {
+        val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val sevenDaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000L
+        val stats = usageStatsManager.queryUsageStats(
+            UsageStatsManager.INTERVAL_DAILY, sevenDaysAgo, System.currentTimeMillis()
+        ) ?: return null
+        val pm = context.packageManager
+        return stats
+            .filter { pm.getLaunchIntentForPackage(it.packageName) != null && it.totalTimeInForeground > 0 }
+            .groupBy { it.packageName }
+            .mapValues { (_, list) -> list.sumOf { it.totalTimeInForeground } }
+            .maxByOrNull { it.value }
+            ?.toPair()
+    }
 }

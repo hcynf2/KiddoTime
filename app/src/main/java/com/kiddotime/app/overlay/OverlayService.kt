@@ -18,7 +18,8 @@ class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private var overlayView: FrameLayout? = null
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var homeReceiver: android.content.BroadcastReceiver?=null
+    private var homeReceiver: android.content.BroadcastReceiver? = null
+    private var currentLockedPackage: String = ""
 
     companion object {
         const val EXTRA_APP_NAME = "app_name"
@@ -56,6 +57,7 @@ class OverlayService : Service() {
         val appName = intent?.getStringExtra(EXTRA_APP_NAME) ?: "this app"
         val lockedPackage = intent?.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
         val lockScreenOnly = intent?.getBooleanExtra("lock_screen_only", false) ?: false
+        currentLockedPackage = lockedPackage
         Log.d("KiddoTime", "OverlayService onStartCommand - appName=$appName lockScreenOnly=$lockScreenOnly")
         mainHandler.post {
             if (overlayView == null) {
@@ -102,8 +104,10 @@ class OverlayService : Service() {
                         mainHandler.post {
                             unregisterHomeReceiver()
                             removeOverlay()
-                            val resetIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED")
-                            resetIntent.setPackage(packageName)
+                            val resetIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED").apply {
+                                setPackage(packageName)
+                                putExtra("package_name", currentLockedPackage)
+                            }
                             sendBroadcast(resetIntent)
                         }
                     }
@@ -192,8 +196,10 @@ class OverlayService : Service() {
                         setPackage(packageName)
                     }
                     sendBroadcast(unlockIntent)
-                    val dismissIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED")
-                    dismissIntent.setPackage(packageName)
+                    val dismissIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED").apply {
+                        setPackage(packageName)
+                        putExtra("package_name", lockedPackage)
+                    }
                     sendBroadcast(dismissIntent)
                     val launchIntent = packageManager.getLaunchIntentForPackage(lockedPackage)
                     launchIntent?.let {
@@ -218,8 +224,10 @@ class OverlayService : Service() {
                     sendBroadcast(broadcastIntent)
                     unregisterHomeReceiver()
                     removeOverlay()
-                    val dismissIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED")
-                    dismissIntent.setPackage(packageName)
+                    val dismissIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED").apply {
+                        setPackage(packageName)
+                        putExtra("package_name", currentLockedPackage)
+                    }
                     sendBroadcast(dismissIntent)
                     val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                         addCategory(Intent.CATEGORY_HOME)
@@ -236,8 +244,10 @@ class OverlayService : Service() {
                     removeOverlay()
                     // Reset overlay showing so lock screen can reappear
                     // when child tries to reopen the app
-                    val resetIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED")
-                    resetIntent.setPackage(packageName)
+                    val resetIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED").apply {
+                        setPackage(packageName)
+                        putExtra("package_name", currentLockedPackage)
+                    }
                     sendBroadcast(resetIntent)
                     // Navigate to home screen
                     val homeIntent = Intent(Intent.ACTION_MAIN).apply {
