@@ -1,5 +1,13 @@
 package com.kiddotime.app.data
 
+import kotlinx.coroutines.flow.Flow
+import java.util.Calendar
+
+data class TodayStopStats(
+    val onTime: Int,  // stops closed within ON_TIME_THRESHOLD_MS
+    val total: Int    // all completed stops today
+)
+
 class LimitEventRepository(private val dao: LimitEventDao) {
 
     companion object {
@@ -24,6 +32,26 @@ class LimitEventRepository(private val dao: LimitEventDao) {
         val since = System.currentTimeMillis() - withinDays * 24 * 60 * 60 * 1000L
         return dao.getHardestApp(since)
     }
+
+    /** Today's on-time and total completed stop counts. */
+    suspend fun getTodayStats(): TodayStopStats {
+        val startOfDay = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        return TodayStopStats(
+            onTime = dao.getTodayOnTimeCount(startOfDay, ON_TIME_THRESHOLD_MS),
+            total  = dao.getTodayClosedCount(startOfDay)
+        )
+    }
+
+    /**
+     * Emits whenever the limit_events table changes — used by ChildViewModel
+     * to reactively refresh without polling.
+     */
+    fun observeChanges(): Flow<Int> = dao.observeEventCount()
 
     /**
      * Longest consecutive run of days (ending at the most recent day that had

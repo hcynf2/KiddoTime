@@ -3,6 +3,7 @@ package com.kiddotime.app.data
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 
 /** Returned by [LimitEventDao.getHardestApp]. */
 data class AppHitCount(
@@ -79,4 +80,28 @@ interface LimitEventDao {
         ORDER BY dayBucket ASC
     """)
     suspend fun getDailyStopStats(since: Long, thresholdMs: Long): List<DayStopStats>
+
+    /** On-time stops since [startOfDay] (epoch ms). */
+    @Query("""
+        SELECT COUNT(*) FROM limit_events
+        WHERE limitReachedAt >= :startOfDay
+          AND appClosedAt IS NOT NULL
+          AND (appClosedAt - limitReachedAt) <= :thresholdMs
+    """)
+    suspend fun getTodayOnTimeCount(startOfDay: Long, thresholdMs: Long): Int
+
+    /** Completed stops (any latency) since [startOfDay]. */
+    @Query("""
+        SELECT COUNT(*) FROM limit_events
+        WHERE limitReachedAt >= :startOfDay
+          AND appClosedAt IS NOT NULL
+    """)
+    suspend fun getTodayClosedCount(startOfDay: Long): Int
+
+    /**
+     * Emits the total row count whenever the table changes.
+     * Used by [ChildViewModel] to reactively refresh stats.
+     */
+    @Query("SELECT COUNT(*) FROM limit_events")
+    fun observeEventCount(): Flow<Int>
 }
