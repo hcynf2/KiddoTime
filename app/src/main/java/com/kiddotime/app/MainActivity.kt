@@ -19,6 +19,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.kiddotime.app.navigation.Routes
 import com.kiddotime.app.screens.ChildScreen
+import com.kiddotime.app.screens.DataPrivacyScreen
 import com.kiddotime.app.screens.ModeSelectScreen
 import com.kiddotime.app.screens.ParentScreen
 import com.kiddotime.app.service.AppMonitorService
@@ -50,9 +51,6 @@ class MainActivity : ComponentActivity() {
         }
         AppMonitorService.start(this)
         Log.d("KiddoTime", "Service start called")
-
-        // Start background monitoring service
-        AppMonitorService.start(this)
 
 
         if (!Settings.canDrawOverlays(this)) {
@@ -107,10 +105,15 @@ fun KiddoTimeApp(limitReachedState: MutableState<String?>) {
         }
         composable(Routes.PARENT) {
             Log.d("KiddoTime", "ParentScreen loaded")
-            ParentScreen()
+            ParentScreen(
+                onPrivacyClick = { navController.navigate(Routes.DATA_PRIVACY) }
+            )
         }
         composable(Routes.CHILD) {
             ChildScreen()
+        }
+        composable(Routes.DATA_PRIVACY) {
+            DataPrivacyScreen(onBack = { navController.popBackStack() })
         }
     }
 }

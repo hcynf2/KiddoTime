@@ -1,7 +1,10 @@
 package com.kiddotime.app.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -13,11 +16,75 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kiddotime.app.data.AppLimit
+import com.kiddotime.app.data.BadgeId
 import com.kiddotime.app.viewmodel.ChildViewModel
 
 @Composable
 fun ChildScreen(viewModel: ChildViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Star celebration dialog
+    if (uiState.showCelebration) {
+        AlertDialog(
+            onDismissRequest = { viewModel.clearCelebration() },
+            title = { Text("You earned a star!") },
+            text = { Text("⭐ You earned a star! Great job stopping on time!") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.clearCelebration() }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    // New badge dialog
+    if (uiState.newBadges.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { viewModel.markBadgesSeen() },
+            title = { Text("New Badge!") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    uiState.newBadges.forEach { badge ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(text = badge.emoji, fontSize = 24.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = badge.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = badge.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.markBadgesSeen() }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    // Ask for more time dialog
+    var showAskMoreTimeDialog by remember { mutableStateOf(false) }
+    if (showAskMoreTimeDialog) {
+        AskMoreTimeDialog(
+            limitedApps = uiState.limitedApps,
+            onRequest = { pkg, appName ->
+                viewModel.submitRequest(pkg, appName)
+                showAskMoreTimeDialog = false
+            },
+            onDismiss = { showAskMoreTimeDialog = false }
+        )
+    }
 
     if (uiState.isLoading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -49,6 +116,96 @@ fun ChildScreen(viewModel: ChildViewModel = viewModel()) {
         StarBalanceCard(stars = uiState.starBalance)
         StreakCard(streakDays = uiState.streakDays)
         TodayProgressCard(onTime = uiState.todayOnTimeStops, total = uiState.todayTotalStops)
+
+        // Badges section
+        if (uiState.earnedBadges.isNotEmpty()) {
+            BadgesSection(badges = uiState.earnedBadges)
+        }
+
+        // Ask for more time button
+        ElevatedButton(
+            onClick = { showAskMoreTimeDialog = true },
+            enabled = uiState.limitedApps.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Ask for More Time")
+        }
+    }
+}
+
+// ── Ask for more time dialog ──────────────────────────────────────────────────
+
+@Composable
+private fun AskMoreTimeDialog(
+    limitedApps: List<AppLimit>,
+    onRequest: (packageName: String, appName: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ask for More Time") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Which app do you want more time for?",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                limitedApps.forEach { appLimit ->
+                    OutlinedButton(
+                        onClick = { onRequest(appLimit.packageName, appLimit.appName) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Ask 30 min — ${appLimit.appName}")
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+// ── Badges section ────────────────────────────────────────────────────────────
+
+@Composable
+private fun BadgesSection(badges: List<BadgeId>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Your Badges",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(badges) { badge ->
+                BadgeChip(badge = badge)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BadgeChip(badge: BadgeId) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 2.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(text = badge.emoji, fontSize = 24.sp)
+            Text(
+                text = badge.title,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 

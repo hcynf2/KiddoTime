@@ -36,10 +36,12 @@ class AppMonitorService : Service() {
     private lateinit var bedtimeRepo: BedtimeRepository
     private lateinit var limitEventRepo: com.kiddotime.app.data.LimitEventRepository
     private lateinit var starRepo: com.kiddotime.app.data.StarRepository
+    private lateinit var screenTimeLimitRepo: com.kiddotime.app.data.ScreenTimeLimitRepository
 
     // Tracks when each package's limit fired this session (packageName → timestamp).
     // Used to determine on-time eligibility when the overlay is dismissed.
     private val limitFiredAt = mutableMapOf<String, Long>()
+    private val totalCapPackages = mutableSetOf<String>()
     private lateinit var windowManager: WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private var warningOverlayView: FrameLayout? = null
@@ -76,6 +78,7 @@ class AppMonitorService : Service() {
         repository = AppLimitRepository(db.appLimitDao())
         limitEventRepo = com.kiddotime.app.data.LimitEventRepository(db.limitEventDao())
         starRepo = com.kiddotime.app.data.StarRepository(applicationContext)
+        screenTimeLimitRepo = com.kiddotime.app.data.ScreenTimeLimitRepository(applicationContext)
         bedtimeRepo = BedtimeRepository(applicationContext)
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         NotificationHelper.createNotificationChannel(this)
@@ -152,6 +155,26 @@ class AppMonitorService : Service() {
         val limits = repository.allLimits.first()
         val limit = limits.find { it.packageName == currentPackage } ?: return
         val usageMs = getAppUsageToday(currentPackage)
+
+        // Total daily cap check
+        val capMs = screenTimeLimitRepo.capMs
+        if (capMs > 0 && !isOverlayShowing.get() && currentPackage !in unlockedApps && currentPackage !in triggeredApps) {
+            val totalUsage = getTotalUsageToday()
+            if (totalUsage >= capMs) {
+                Log.d("KiddoTime", "TOTAL CAP REACHED — locking $currentPackage")
+                dismissWarning()
+                isOverlayShowing.set(true)
+                triggeredApps.add(currentPackage)
+                lockedApps.add(currentPackage)
+                lockedApps_names[currentPackage] = limit.appName
+                totalCapPackages.add(currentPackage)
+                val now = System.currentTimeMillis()
+                limitFiredAt[currentPackage] = now
+                serviceScope.launch { limitEventRepo.recordLimitReached(currentPackage, limit.appName, now) }
+                broadcastLimitReached(currentPackage, limit.appName)
+                return
+            }
+        }
         Log.d("KiddoTime", "Usage for $currentPackage: ${usageMs}ms / limit: ${limit.dailyLimitMs}ms")
 
         if (usageMs >= limit.dailyLimitMs && currentPackage !in triggeredApps) {
@@ -281,7 +304,8 @@ class AppMonitorService : Service() {
                         val closedAt = System.currentTimeMillis()
                         serviceScope.launch { limitEventRepo.recordAppClosed(pkg, closedAt) }
                         val firedAt = limitFiredAt.remove(pkg)
-                        if (firedAt != null &&
+                        val isTotalCap = totalCapPackages.remove(pkg)
+                        if (!isTotalCap && firedAt != null &&
                             closedAt - firedAt <= com.kiddotime.app.data.LimitEventRepository.ON_TIME_THRESHOLD_MS
                         ) {
                             starRepo.addStar()
@@ -484,6 +508,19 @@ class AppMonitorService : Service() {
         if (lastResumeTime != -1L) totalTime += now - lastResumeTime
         Log.d("KiddoTime", "Event-based usage for $packageName: ${totalTime}ms")
         return totalTime
+    }
+
+    private fun getTotalUsageToday(): Long {
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+        val startOfDay = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        return usm.queryUsageStats(
+            android.app.usage.UsageStatsManager.INTERVAL_DAILY,
+            startOfDay,
+            System.currentTimeMillis()
+        )?.sumOf { it.totalTimeInForeground } ?: 0L
     }
 
     private fun broadcastLimitReached(packageName: String, appName: String) {

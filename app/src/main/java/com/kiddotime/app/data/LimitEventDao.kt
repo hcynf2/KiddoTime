@@ -104,4 +104,24 @@ interface LimitEventDao {
      */
     @Query("SELECT COUNT(*) FROM limit_events")
     fun observeEventCount(): Flow<Int>
+
+    /** Total on-time stops ever (all time). */
+    @Query("""
+        SELECT COUNT(*) FROM limit_events
+        WHERE appClosedAt IS NOT NULL
+          AND (appClosedAt - limitReachedAt) <= :thresholdMs
+    """)
+    suspend fun getTotalOnTimeCount(thresholdMs: Long): Int
+
+    /** All events ordered by most recent first, limited to 100. */
+    @Query("SELECT * FROM limit_events ORDER BY limitReachedAt DESC LIMIT 100")
+    fun getAllEvents(): Flow<List<LimitEvent>>
+
+    /** One-shot snapshot of all events for export. */
+    @Query("SELECT * FROM limit_events ORDER BY limitReachedAt DESC")
+    suspend fun getAllEventsOnce(): List<LimitEvent>
+
+    /** Delete all rows. */
+    @Query("DELETE FROM limit_events")
+    suspend fun clearAll()
 }

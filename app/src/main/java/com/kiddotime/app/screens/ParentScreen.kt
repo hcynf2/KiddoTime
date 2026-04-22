@@ -16,10 +16,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.TrendingUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,18 +42,28 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kiddotime.app.data.LimitEvent
+import com.kiddotime.app.data.ScreenTimeRequest
 import com.kiddotime.app.viewmodel.AppUsageWithLimit
 import com.kiddotime.app.viewmodel.BedtimeState
 import com.kiddotime.app.viewmodel.DashboardStats
 import com.kiddotime.app.viewmodel.ParentViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 
 // Which bottom sheet is currently open
-private enum class DashboardSheet { MostUsed, Weekly, Limits, ParentPin, AppLimits, Bedtime }
+private enum class DashboardSheet {
+    MostUsed, Weekly, Limits, ParentPin, AppLimits, Bedtime, Behaviour, History, TimeRequests
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ParentScreen(viewModel: ParentViewModel = viewModel()) {
+fun ParentScreen(
+    onPrivacyClick: () -> Unit = {},
+    viewModel: ParentViewModel = viewModel()
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -150,6 +165,40 @@ fun ParentScreen(viewModel: ParentViewModel = viewModel()) {
                                     onClick = { activeSheet = DashboardSheet.Bedtime }
                                 )
                             }
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                ActionButton(
+                                    icon = Icons.Outlined.TrendingUp,
+                                    label = "Behaviour",
+                                    subtitle = if ((stats?.smoothStopStreakDays ?: 0) > 0)
+                                        "${stats!!.smoothStopStreakDays} day streak" else "Stats",
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { activeSheet = DashboardSheet.Behaviour }
+                                )
+                                ActionButton(
+                                    icon = Icons.Outlined.History,
+                                    label = "History",
+                                    subtitle = "${uiState.historyEvents.size} events",
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { activeSheet = DashboardSheet.History }
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                ActionButton(
+                                    icon = Icons.Outlined.Inbox,
+                                    label = "Time Requests",
+                                    subtitle = if (uiState.pendingRequests.isNotEmpty())
+                                        "${uiState.pendingRequests.size} pending" else "None pending",
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { activeSheet = DashboardSheet.TimeRequests }
+                                )
+                                ActionButton(
+                                    icon = Icons.Outlined.Security,
+                                    label = "Privacy & Data",
+                                    subtitle = "Export or delete",
+                                    modifier = Modifier.weight(1f),
+                                    onClick = onPrivacyClick
+                                )
+                            }
                         }
                     }
 
@@ -159,7 +208,7 @@ fun ParentScreen(viewModel: ParentViewModel = viewModel()) {
         }
     }
 
-    // ── Bottom sheets ─────────────────────────────────────────────────────────
+    // ── Bottom sheets ─────────────────────────────────────────────────────────────
     if (activeSheet != null) {
         val stats = uiState.dashboardStats
         ModalBottomSheet(
@@ -187,7 +236,10 @@ fun ParentScreen(viewModel: ParentViewModel = viewModel()) {
                     if (stats != null) {
                         LimitsSheetContent(
                             stats = stats,
-                            formatDuration = viewModel::formatDuration
+                            formatDuration = viewModel::formatDuration,
+                            totalCapMs = uiState.totalCapMs,
+                            onSetCap = { viewModel.setTotalCap(it) },
+                            onClearCap = { viewModel.clearTotalCap() }
                         )
                     }
                 }
@@ -218,6 +270,27 @@ fun ParentScreen(viewModel: ParentViewModel = viewModel()) {
                             viewModel.saveBedtime(enabled, hour, minute, selectedApps)
                             activeSheet = null
                         }
+                    )
+                }
+                DashboardSheet.Behaviour -> {
+                    if (stats != null) {
+                        BehaviourSheetContent(
+                            stats = stats,
+                            formatDuration = viewModel::formatDuration
+                        )
+                    }
+                }
+                DashboardSheet.History -> {
+                    HistorySheetContent(events = uiState.historyEvents)
+                }
+                DashboardSheet.TimeRequests -> {
+                    TimeRequestsSheetContent(
+                        requests = uiState.pendingRequests,
+                        onApprove = { req ->
+                            viewModel.approveRequest(req.id, req.packageName, req.appName, req.extraMs)
+                        },
+                        onDeny = { req -> viewModel.denyRequest(req.id) },
+                        verifyPin = { viewModel.verifyPin(it) }
                     )
                 }
                 null -> {}
@@ -484,7 +557,20 @@ private fun WeeklySheetContent(stats: DashboardStats, formatDuration: (Long) -> 
 }
 
 @Composable
-private fun LimitsSheetContent(stats: DashboardStats, formatDuration: (Long) -> String) {
+private fun LimitsSheetContent(
+    stats: DashboardStats,
+    formatDuration: (Long) -> String,
+    totalCapMs: Long,
+    onSetCap: (Long) -> Unit,
+    onClearCap: () -> Unit
+) {
+    var capHours by remember(totalCapMs) {
+        mutableStateOf(if (totalCapMs > 0) (totalCapMs / 3600000L).toString() else "")
+    }
+    var capMinutes by remember(totalCapMs) {
+        mutableStateOf(if (totalCapMs > 0) ((totalCapMs % 3600000L) / 60000L).toString() else "")
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -509,6 +595,76 @@ private fun LimitsSheetContent(stats: DashboardStats, formatDuration: (Long) -> 
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
+            }
+        }
+
+        // Total daily cap card
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Total Daily Cap",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (totalCapMs > 0) formatLimitDuration(totalCapMs) else "Not set",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (totalCapMs > 0) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = capHours,
+                        onValueChange = { capHours = it.filter { c -> c.isDigit() } },
+                        label = { Text("Hours") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = capMinutes,
+                        onValueChange = { capMinutes = it.filter { c -> c.isDigit() } },
+                        label = { Text("Minutes") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            val h = capHours.toLongOrNull() ?: 0L
+                            val m = capMinutes.toLongOrNull() ?: 0L
+                            val ms = (h * 60 + m) * 60_000L
+                            if (ms > 0) onSetCap(ms)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Set Cap")
+                    }
+                    if (totalCapMs > 0) {
+                        TextButton(onClick = onClearCap) {
+                            Text("Clear", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
             }
         }
 
@@ -550,6 +706,322 @@ private fun LimitsSheetContent(stats: DashboardStats, formatDuration: (Long) -> 
 
             stats.appsWithLimitsList.forEach { awl ->
                 LimitedAppRow(awl = awl, formatDuration = formatDuration)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BehaviourSheetContent(stats: DashboardStats, formatDuration: (Long) -> String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        SheetTitle("📊 Behaviour")
+
+        // Avg time to stop
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Average time to stop",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = if (stats.avgTransitionLatencyMs != null)
+                    formatDuration(stats.avgTransitionLatencyMs)
+                else
+                    "No data yet",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        HorizontalDivider()
+
+        // Hardest app
+        if (stats.hardestAppName.isNotEmpty()) {
+            HighlightRow(
+                label = "🔴 Hardest app to stop this week",
+                appName = stats.hardestAppName,
+                detail = "${stats.hardestAppHitCount} hits"
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "🔴 Hardest app to stop this week",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "No data yet",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        HorizontalDivider()
+
+        // Smooth stop streak
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "🔥 Current smooth stop streak",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "${stats.smoothStopStreakDays} day${if (stats.smoothStopStreakDays == 1) "" else "s"}",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun HistorySheetContent(events: List<LimitEvent>) {
+    val ON_TIME_THRESHOLD_MS = 60_000L
+    val dayFormat = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
+    val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+
+    // Group by epoch-day
+    val grouped = events.groupBy { it.limitReachedAt / 86_400_000L }
+    val sortedDays = grouped.keys.sortedDescending()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 32.dp)
+    ) {
+        SheetTitle("📜 History")
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (events.isEmpty()) {
+            Text(
+                text = "No limit events recorded yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxHeight(0.8f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                sortedDays.forEach { dayBucket ->
+                    val dayEvents = grouped[dayBucket] ?: emptyList()
+                    item {
+                        Text(
+                            text = dayFormat.format(Date(dayBucket * 86_400_000L)),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                    items(dayEvents) { event ->
+                        val closedAt = event.appClosedAt
+                        val isOnTime = closedAt != null && (closedAt - event.limitReachedAt) <= ON_TIME_THRESHOLD_MS
+                        val latencyText = if (closedAt != null) {
+                            val latencyMs = closedAt - event.limitReachedAt
+                            val latencySec = latencyMs / 1000
+                            if (latencySec < 60) "${latencySec}s" else "${latencySec / 60}m ${latencySec % 60}s"
+                        } else null
+
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = event.appName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = timeFormat.format(Date(event.limitReachedAt)),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    if (isOnTime) {
+                                        StatusChip(
+                                            text = "✅ On time",
+                                            background = Color(0xFFE8F5E9),
+                                            textColor = Color(0xFF1B5E20)
+                                        )
+                                    } else if (closedAt != null) {
+                                        StatusChip(
+                                            text = "🔴 Late",
+                                            background = Color(0xFFFFEBEE),
+                                            textColor = Color(0xFFB71C1C)
+                                        )
+                                    } else {
+                                        StatusChip(
+                                            text = "⏳ Open",
+                                            background = Color(0xFFFFF8E1),
+                                            textColor = Color(0xFFE65100)
+                                        )
+                                    }
+                                    if (latencyText != null) {
+                                        Text(
+                                            text = latencyText,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                item { Spacer(modifier = Modifier.height(16.dp)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimeRequestsSheetContent(
+    requests: List<ScreenTimeRequest>,
+    onApprove: (ScreenTimeRequest) -> Unit,
+    onDeny: (ScreenTimeRequest) -> Unit,
+    verifyPin: (String) -> Boolean
+) {
+    var pendingApprovalRequest by remember { mutableStateOf<ScreenTimeRequest?>(null) }
+    var pinInput by remember { mutableStateOf("") }
+    var pinError by remember { mutableStateOf<String?>(null) }
+
+    // PIN approval dialog
+    pendingApprovalRequest?.let { req ->
+        AlertDialog(
+            onDismissRequest = {
+                pendingApprovalRequest = null
+                pinInput = ""
+                pinError = null
+            },
+            title = { Text("Enter PIN to Approve") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Approve 30 min extra for ${req.appName}?")
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = { if (it.length <= 6) pinInput = it.filter { c -> c.isDigit() } },
+                        label = { Text("Parent PIN") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (pinError != null) {
+                        Text(
+                            text = pinError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (verifyPin(pinInput)) {
+                        onApprove(req)
+                        pendingApprovalRequest = null
+                        pinInput = ""
+                        pinError = null
+                    } else {
+                        pinError = "Incorrect PIN"
+                    }
+                }) { Text("Approve") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    pendingApprovalRequest = null
+                    pinInput = ""
+                    pinError = null
+                }) { Text("Cancel") }
+            }
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        SheetTitle("📥 Time Requests")
+
+        if (requests.isEmpty()) {
+            Text(
+                text = "No pending requests.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxHeight(0.75f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(requests) { req ->
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = req.appName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "+${formatLimitDuration(req.extraMs)} requested",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { pendingApprovalRequest = req },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) { Text("Approve") }
+                                OutlinedButton(
+                                    onClick = { onDeny(req) },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) { Text("Deny") }
+                            }
+                        }
+                    }
+                }
+                item { Spacer(modifier = Modifier.height(16.dp)) }
             }
         }
     }

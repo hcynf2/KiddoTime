@@ -53,6 +53,19 @@ class LimitEventRepository(private val dao: LimitEventDao) {
      */
     fun observeChanges(): Flow<Int> = dao.observeEventCount()
 
+    /** Total on-time stops across all time. */
+    suspend fun getTotalOnTimeCount(): Int =
+        dao.getTotalOnTimeCount(ON_TIME_THRESHOLD_MS)
+
+    /** All events as a Flow, newest first, max 100. */
+    fun getAllEvents(): Flow<List<LimitEvent>> = dao.getAllEvents()
+
+    /** One-shot snapshot of all events for export. */
+    suspend fun getAllEventsOnce(): List<LimitEvent> = dao.getAllEventsOnce()
+
+    /** Delete all limit events. */
+    suspend fun clearAll() = dao.clearAll()
+
     /**
      * Longest consecutive run of days (ending at the most recent day that had
      * any events) where ≥ [thresholdPct] of stops were on time.

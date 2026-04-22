@@ -8,9 +8,15 @@ import com.kiddotime.app.data.AppDatabase
 import com.kiddotime.app.data.AppLimit
 import com.kiddotime.app.data.AppLimitRepository
 import com.kiddotime.app.data.AppUsageInfo
+import com.kiddotime.app.data.BadgeRepository
 import com.kiddotime.app.data.BedtimeRepository
+import com.kiddotime.app.data.LimitEvent
 import com.kiddotime.app.data.LimitEventRepository
 import com.kiddotime.app.data.PinRepository
+import com.kiddotime.app.data.ScreenTimeLimitRepository
+import com.kiddotime.app.data.ScreenTimeRequest
+import com.kiddotime.app.data.ScreenTimeRequestRepository
+import com.kiddotime.app.data.StarRepository
 import com.kiddotime.app.data.UsageStatsHelper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -61,7 +67,12 @@ data class ParentUiState(
     val pinError: String? = null,
     val pinSaved: Boolean = false,
     val dashboardStats: DashboardStats? = null,
-    val bedtimeState: BedtimeState = BedtimeState()
+    val bedtimeState: BedtimeState = BedtimeState(),
+    val historyEvents: List<LimitEvent> = emptyList(),
+    val pendingRequests: List<ScreenTimeRequest> = emptyList(),
+    val totalCapMs: Long = 0L,
+    val exportText: String? = null,
+    val deleteComplete: Boolean = false
 )
 
 class ParentViewModel(application: Application) : AndroidViewModel(application) {
@@ -70,6 +81,10 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
     private val db = AppDatabase.getDatabase(application)
     private val repository = AppLimitRepository(db.appLimitDao())
     private val limitEventRepo = LimitEventRepository(db.limitEventDao())
+    private val requestRepo = ScreenTimeRequestRepository(db.screenTimeRequestDao())
+    private val screenTimeLimitRepo = com.kiddotime.app.data.ScreenTimeLimitRepository(application)
+    private val starRepo = StarRepository(application)
+    private val badgeRepo = BadgeRepository(application)
 
     private val _uiState = MutableStateFlow(ParentUiState())
     val uiState: StateFlow<ParentUiState> = _uiState
@@ -94,8 +109,23 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
                     hour         = bedtimeRepository.hour,
                     minute       = bedtimeRepository.minute,
                     selectedApps = bedtimeRepository.getApps()
-                )
+                ),
+                totalCapMs = screenTimeLimitRepo.capMs
             )
+        }
+
+        // Collect history events as a separate flow
+        viewModelScope.launch {
+            limitEventRepo.getAllEvents().collect { events ->
+                _uiState.value = _uiState.value.copy(historyEvents = events)
+            }
+        }
+
+        // Collect pending requests as a separate flow
+        viewModelScope.launch {
+            requestRepo.getPendingRequests().collect { requests ->
+                _uiState.value = _uiState.value.copy(pendingRequests = requests)
+            }
         }
     }
 
@@ -135,6 +165,30 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
 
     fun verifyPin(input: String): Boolean {
         return pinRepository.verifyPin(input)
+    }
+
+    fun approveRequest(requestId: Long, packageName: String, appName: String, extraMs: Long) {
+        viewModelScope.launch {
+            requestRepo.approve(requestId)
+            val currentLimit = repository.getLimitForApp(packageName)?.dailyLimitMs ?: 0L
+            repository.setLimit(packageName, appName, currentLimit + extraMs)
+        }
+    }
+
+    fun denyRequest(requestId: Long) {
+        viewModelScope.launch {
+            requestRepo.deny(requestId)
+        }
+    }
+
+    fun setTotalCap(ms: Long) {
+        screenTimeLimitRepo.capMs = ms
+        _uiState.value = _uiState.value.copy(totalCapMs = ms)
+    }
+
+    fun clearTotalCap() {
+        screenTimeLimitRepo.capMs = 0L
+        _uiState.value = _uiState.value.copy(totalCapMs = 0L)
     }
 
     private fun loadUsageStats() {
@@ -224,5 +278,62 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
 
     fun formatDuration(ms: Long): String {
         return usageStatsHelper.formatDuration(ms)
+    }
+
+    fun requestExport() {
+        viewModelScope.launch {
+            val text = generateExportText()
+            _uiState.value = _uiState.value.copy(exportText = text)
+        }
+    }
+
+    fun clearExportText() {
+        _uiState.value = _uiState.value.copy(exportText = null)
+    }
+
+    fun deleteAllData() {
+        viewModelScope.launch {
+            limitEventRepo.clearAll()
+            requestRepo.clearAll()
+            starRepo.clearAll()
+            badgeRepo.clearAll()
+            screenTimeLimitRepo.capMs = 0L
+            _uiState.value = _uiState.value.copy(
+                totalCapMs = 0L,
+                historyEvents = emptyList(),
+                pendingRequests = emptyList(),
+                deleteComplete = true
+            )
+        }
+    }
+
+    fun clearDeleteComplete() {
+        _uiState.value = _uiState.value.copy(deleteComplete = false)
+    }
+
+    private suspend fun generateExportText(): String {
+        val sb = StringBuilder()
+        sb.appendLine("KiddoTime Data Export")
+        sb.appendLine("Generated: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}")
+        sb.appendLine("=".repeat(40))
+
+        val events = limitEventRepo.getAllEventsOnce()
+        sb.appendLine("\nLimit Events (${events.size} total):")
+        if (events.isEmpty()) {
+            sb.appendLine("  No events recorded.")
+        } else {
+            val dayFmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+            events.forEach { e ->
+                val closed = if (e.appClosedAt != null) {
+                    val latencySec = (e.appClosedAt - e.limitReachedAt) / 1000
+                    "closed ${latencySec}s later"
+                } else "still open"
+                sb.appendLine("  [${dayFmt.format(java.util.Date(e.limitReachedAt))}] ${e.appName} — $closed")
+            }
+        }
+
+        sb.appendLine("\nStars Earned: ${starRepo.balance}")
+        sb.appendLine("\nAll data is stored on-device only and never transmitted.")
+        return sb.toString()
     }
 }
