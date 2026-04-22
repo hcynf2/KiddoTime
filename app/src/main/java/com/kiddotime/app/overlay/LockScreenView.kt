@@ -13,7 +13,8 @@ class LockScreenView(
     private val appName: String,
     private val onCorrectPin: () -> Unit,
     private val onWrongPin: () -> Unit,
-    private val onGoHome: () -> Unit
+    private val onGoHome: () -> Unit,
+    private val onMaxAttempts: () -> Unit = {}
 ) : FrameLayout(context) {
 
     private val errorText = TextView(context)
@@ -81,7 +82,7 @@ class LockScreenView(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, 16)
-            for (i in 0 until 6) {
+            for (i in 0 until 4) {
                 val dot = TextView(context).apply {
                     text = "○"
                     textSize = 26f
@@ -104,11 +105,19 @@ class LockScreenView(
         val wrapper = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
 
         val grid = GridLayout(context).apply {
             columnCount = 3
             rowCount = 4
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.CENTER_HORIZONTAL }
             listOf("1","2","3","4","5","6","7","8","9","⌫","0","✓").forEach { label ->
                 addView(Button(context).apply {
                     text = label
@@ -167,10 +176,15 @@ class LockScreenView(
             onCorrectPin()
         } else {
             attemptCount++
-            errorText.text = "Wrong PIN. Try again. ($attemptCount attempts)"
             currentPin = ""
             updatePinDots()
-            onWrongPin()
+            if (attemptCount >= 5) {
+                errorText.text = "Maximum attempts reached!"
+                onMaxAttempts()
+            } else {
+                errorText.text = "Wrong PIN. Try again. ($attemptCount/5 attempts)"
+                onWrongPin()
+            }
         }
     }
 

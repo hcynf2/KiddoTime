@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.Toast
 
 class OverlayService : Service() {
 
@@ -204,6 +205,29 @@ class OverlayService : Service() {
             },
             onWrongPin = {
                 Log.d("KiddoTime", "Wrong PIN entered")
+            },
+            onMaxAttempts = {
+                Log.d("KiddoTime", "Max PIN attempts reached - exiting")
+                mainHandler.post {
+                    val msg = "Maximum pin attempt reached, app will exit now"
+                    Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
+                    val broadcastIntent = Intent("com.kiddotime.app.MAX_PIN_ATTEMPTS").apply {
+                        putExtra("message", msg)
+                        setPackage(packageName)
+                    }
+                    sendBroadcast(broadcastIntent)
+                    unregisterHomeReceiver()
+                    removeOverlay()
+                    val dismissIntent = Intent("com.kiddotime.app.OVERLAY_DISMISSED")
+                    dismissIntent.setPackage(packageName)
+                    sendBroadcast(dismissIntent)
+                    val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                        addCategory(Intent.CATEGORY_HOME)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(homeIntent)
+                    stopSelf()
+                }
             },
             onGoHome = {
                 // Child pressed back/home - dismiss overlay and go to home screen
