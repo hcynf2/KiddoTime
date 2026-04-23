@@ -10,6 +10,10 @@ import com.kiddotime.app.data.AppLimitRepository
 import com.kiddotime.app.data.AppUsageInfo
 import com.kiddotime.app.data.BadgeRepository
 import com.kiddotime.app.data.BedtimeRepository
+import com.kiddotime.app.data.CooldownEventRepository
+import com.kiddotime.app.data.GamePreferences
+import com.kiddotime.app.data.TimeRequestPreferences
+import com.kiddotime.app.data.TimeRequestStats
 import com.kiddotime.app.data.LimitEvent
 import com.kiddotime.app.data.LimitEventRepository
 import com.kiddotime.app.data.PinRepository
@@ -52,6 +56,26 @@ data class DashboardStats(
     val smoothStopStreakDays: Int = 0           // consecutive days with ≥70% on-time stops
 )
 
+data class CooldownStats(
+    val totalStarted: Int = 0,
+    val totalCompleted: Int = 0,
+    val startedByType: Map<String, Int> = emptyMap(),
+    val completedByType: Map<String, Int> = emptyMap(),
+    val whatNextChoiceCounts: Map<String, Int> = emptyMap()
+) {
+    val overallCompletionRate: Float
+        get() = if (totalStarted > 0) totalCompleted.toFloat() / totalStarted else 0f
+
+    fun completionRateFor(gameType: String): Float {
+        val started = startedByType[gameType] ?: 0
+        val completed = completedByType[gameType] ?: 0
+        return if (started > 0) completed.toFloat() / started else 0f
+    }
+
+    val topWhatNextChoice: String
+        get() = whatNextChoiceCounts.entries.maxByOrNull { it.value }?.key ?: ""
+}
+
 data class BedtimeState(
     val isEnabled: Boolean = false,
     val hour: Int = 21,
@@ -72,7 +96,10 @@ data class ParentUiState(
     val pendingRequests: List<ScreenTimeRequest> = emptyList(),
     val totalCapMs: Long = 0L,
     val exportText: String? = null,
-    val deleteComplete: Boolean = false
+    val deleteComplete: Boolean = false,
+    val cooldownStats: CooldownStats? = null,
+    val requestsEnabled: Boolean = true,
+    val timeRequestStats: TimeRequestStats? = null
 )
 
 class ParentViewModel(application: Application) : AndroidViewModel(application) {
@@ -82,7 +109,9 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
     private val repository = AppLimitRepository(db.appLimitDao())
     private val limitEventRepo = LimitEventRepository(db.limitEventDao())
     private val requestRepo = ScreenTimeRequestRepository(db.screenTimeRequestDao())
+    private val cooldownEventRepo = CooldownEventRepository(db.cooldownEventDao())
     private val screenTimeLimitRepo = com.kiddotime.app.data.ScreenTimeLimitRepository(application)
+    private val timeRequestPrefs = TimeRequestPreferences(application)
     private val starRepo = StarRepository(application)
     private val badgeRepo = BadgeRepository(application)
 
@@ -91,6 +120,21 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
 
     private val pinRepository = PinRepository(application)
     private val bedtimeRepository = BedtimeRepository(application)
+
+    /**
+     * Called on every ON_RESUME. If the user just granted usage-stats permission in Settings
+     * this will detect it and kick off the full stats load. If stats are already loaded
+     * (hasPermission == true) the function returns immediately to avoid duplicate flows.
+     */
+    fun recheckPermission() {
+        if (_uiState.value.hasPermission) return
+        viewModelScope.launch {
+            if (usageStatsHelper.hasUsagePermission()) {
+                Log.d("KiddoTime", "recheckPermission: permission now granted — loading stats")
+                loadUsageStats()
+            }
+        }
+    }
 
     fun checkPermissionAndLoad() {
         viewModelScope.launch {
@@ -126,6 +170,19 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
             requestRepo.getPendingRequests().collect { requests ->
                 _uiState.value = _uiState.value.copy(pendingRequests = requests)
             }
+        }
+
+        // One-shot load of cooldown effectiveness stats
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(cooldownStats = buildCooldownStats())
+        }
+
+        // Load time-request toggle state and analysis stats
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                requestsEnabled   = timeRequestPrefs.enabled,
+                timeRequestStats  = requestRepo.buildStats()
+            )
         }
     }
 
@@ -167,17 +224,24 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
         return pinRepository.verifyPin(input)
     }
 
+    fun setRequestsEnabled(enabled: Boolean) {
+        timeRequestPrefs.enabled = enabled
+        _uiState.value = _uiState.value.copy(requestsEnabled = enabled)
+    }
+
     fun approveRequest(requestId: Long, packageName: String, appName: String, extraMs: Long) {
         viewModelScope.launch {
             requestRepo.approve(requestId)
             val currentLimit = repository.getLimitForApp(packageName)?.dailyLimitMs ?: 0L
             repository.setLimit(packageName, appName, currentLimit + extraMs)
+            _uiState.value = _uiState.value.copy(timeRequestStats = requestRepo.buildStats())
         }
     }
 
     fun denyRequest(requestId: Long) {
         viewModelScope.launch {
             requestRepo.deny(requestId)
+            _uiState.value = _uiState.value.copy(timeRequestStats = requestRepo.buildStats())
         }
     }
 
@@ -295,6 +359,7 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             limitEventRepo.clearAll()
             requestRepo.clearAll()
+            cooldownEventRepo.clearAll()
             starRepo.clearAll()
             badgeRepo.clearAll()
             screenTimeLimitRepo.capMs = 0L
@@ -302,6 +367,7 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
                 totalCapMs = 0L,
                 historyEvents = emptyList(),
                 pendingRequests = emptyList(),
+                cooldownStats = CooldownStats(),
                 deleteComplete = true
             )
         }
@@ -309,6 +375,25 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearDeleteComplete() {
         _uiState.value = _uiState.value.copy(deleteComplete = false)
+    }
+
+    private suspend fun buildCooldownStats(): CooldownStats {
+        val gameTypes = listOf(GamePreferences.GAME_CARD, GamePreferences.GAME_CLEANUP, GamePreferences.GAME_WHAT_NEXT)
+        val startedByType  = gameTypes.associateWith { cooldownEventRepo.getStartedByType(it) }
+        val completedByType = gameTypes.associateWith { cooldownEventRepo.getCompletedByType(it) }
+        return CooldownStats(
+            totalStarted      = startedByType.values.sum(),
+            totalCompleted    = completedByType.values.sum(),
+            startedByType     = startedByType,
+            completedByType   = completedByType,
+            whatNextChoiceCounts = cooldownEventRepo.getWhatNextChoiceCounts()
+        )
+    }
+
+    fun refreshCooldownStats() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(cooldownStats = buildCooldownStats())
+        }
     }
 
     private suspend fun generateExportText(): String {
@@ -330,6 +415,17 @@ class ParentViewModel(application: Application) : AndroidViewModel(application) 
                 } else "still open"
                 sb.appendLine("  [${dayFmt.format(java.util.Date(e.limitReachedAt))}] ${e.appName} — $closed")
             }
+        }
+
+        val cooldown = buildCooldownStats()
+        sb.appendLine("\nCooldown Effectiveness:")
+        sb.appendLine("  Started: ${cooldown.totalStarted}  Completed: ${cooldown.totalCompleted}")
+        if (cooldown.totalStarted > 0) {
+            val pct = (cooldown.overallCompletionRate * 100).toInt()
+            sb.appendLine("  Overall completion rate: $pct%")
+        }
+        if (cooldown.whatNextChoiceCounts.isNotEmpty()) {
+            sb.appendLine("  Most chosen What's Next: ${cooldown.topWhatNextChoice}")
         }
 
         sb.appendLine("\nStars Earned: ${starRepo.balance}")

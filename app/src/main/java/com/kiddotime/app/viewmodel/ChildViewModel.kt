@@ -11,6 +11,7 @@ import com.kiddotime.app.data.BadgeRepository
 import com.kiddotime.app.data.LimitEventRepository
 import com.kiddotime.app.data.ScreenTimeRequestRepository
 import com.kiddotime.app.data.StarRepository
+import com.kiddotime.app.data.TimeRequestPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -26,7 +27,9 @@ data class ChildUiState(
     val showCelebration: Boolean = false,
     val earnedBadges: List<BadgeId> = emptyList(),
     val newBadges: List<BadgeId> = emptyList(),
-    val limitedApps: List<AppLimit> = emptyList()
+    val limitedApps: List<AppLimit> = emptyList(),
+    val requestsEnabled: Boolean = true,
+    val todayRequestCount: Int = 0
 )
 
 class ChildViewModel(application: Application) : AndroidViewModel(application) {
@@ -37,6 +40,7 @@ class ChildViewModel(application: Application) : AndroidViewModel(application) {
     private val badgeRepo = BadgeRepository(application)
     private val appLimitRepo = AppLimitRepository(db.appLimitDao())
     private val requestRepo = ScreenTimeRequestRepository(db.screenTimeRequestDao())
+    private val timeRequestPrefs = TimeRequestPreferences(application)
 
     private val _uiState = MutableStateFlow(ChildUiState())
     val uiState: StateFlow<ChildUiState> = _uiState
@@ -51,25 +55,29 @@ class ChildViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun loadStats() {
-        val todayStats = limitEventRepo.getTodayStats()
-        val streak     = limitEventRepo.computeCurrentSmoothStopStreak()
-        val balance    = starRepo.balance
-        val celebration = starRepo.pendingCelebration
+        val todayStats      = limitEventRepo.getTodayStats()
+        val streak          = limitEventRepo.computeCurrentSmoothStopStreak()
+        val balance         = starRepo.balance
+        val celebration     = starRepo.pendingCelebration
+        val requestsEnabled = timeRequestPrefs.enabled
+        val todayReqCount   = requestRepo.countTodayRequests()
 
         badgeRepo.evaluate(limitEventRepo, balance)
 
         val limitedApps = appLimitRepo.allLimits.first()
 
         _uiState.value = ChildUiState(
-            todayOnTimeStops = todayStats.onTime,
-            todayTotalStops  = todayStats.total,
-            streakDays       = streak,
-            starBalance      = balance,
-            isLoading        = false,
-            showCelebration  = celebration,
-            earnedBadges     = badgeRepo.getEarnedBadges(),
-            newBadges        = badgeRepo.getNewBadges(),
-            limitedApps      = limitedApps
+            todayOnTimeStops  = todayStats.onTime,
+            todayTotalStops   = todayStats.total,
+            streakDays        = streak,
+            starBalance       = balance,
+            isLoading         = false,
+            showCelebration   = celebration,
+            earnedBadges      = badgeRepo.getEarnedBadges(),
+            newBadges         = badgeRepo.getNewBadges(),
+            limitedApps       = limitedApps,
+            requestsEnabled   = requestsEnabled,
+            todayRequestCount = todayReqCount
         )
     }
 
@@ -85,7 +93,10 @@ class ChildViewModel(application: Application) : AndroidViewModel(application) {
 
     fun submitRequest(packageName: String, appName: String) {
         viewModelScope.launch {
+            if (!timeRequestPrefs.enabled) return@launch
+            if (requestRepo.countTodayRequests() >= 1) return@launch
             requestRepo.submitRequest(packageName, appName)
+            _uiState.value = _uiState.value.copy(todayRequestCount = _uiState.value.todayRequestCount + 1)
         }
     }
 }

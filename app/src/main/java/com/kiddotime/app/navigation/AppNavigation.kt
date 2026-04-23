@@ -1,6 +1,7 @@
 package com.kiddotime.app.navigation
 
 object Routes {
+    const val SPLASH = "splash"
     const val MODE_SELECT = "mode_select"
     const val PARENT = "parent"
     const val CHILD = "child"

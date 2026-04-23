@@ -10,5 +10,6 @@ data class ScreenTimeRequest(
     val appName: String,
     val requestedAt: Long,
     val status: String = "PENDING",
-    val extraMs: Long = 30 * 60 * 1000L
+    val extraMs: Long = 30 * 60 * 1000L,
+    val resolvedAt: Long? = null   // stamped when parent approves or denies
 )

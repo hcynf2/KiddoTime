@@ -123,12 +123,31 @@ fun ChildScreen(viewModel: ChildViewModel = viewModel()) {
         }
 
         // Ask for more time button
+        val canAsk = uiState.limitedApps.isNotEmpty()
+                  && uiState.requestsEnabled
+                  && uiState.todayRequestCount < 1
+        val askBlockReason = when {
+            !uiState.requestsEnabled       -> "Asking for more time is turned off"
+            uiState.todayRequestCount >= 1 -> "You've already asked today — come back tomorrow!"
+            else                           -> null
+        }
+
         ElevatedButton(
             onClick = { showAskMoreTimeDialog = true },
-            enabled = uiState.limitedApps.isNotEmpty(),
+            enabled = canAsk,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Ask for More Time")
+        }
+
+        if (askBlockReason != null) {
+            Text(
+                text = askBlockReason,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }

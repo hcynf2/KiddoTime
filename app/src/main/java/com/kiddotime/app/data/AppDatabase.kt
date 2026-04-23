@@ -8,8 +8,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [AppLimit::class, LimitEvent::class, ScreenTimeRequest::class],
-    version = 3,
+    entities = [AppLimit::class, LimitEvent::class, ScreenTimeRequest::class, CooldownEvent::class],
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -17,6 +17,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun appLimitDao(): AppLimitDao
     abstract fun limitEventDao(): LimitEventDao
     abstract fun screenTimeRequestDao(): ScreenTimeRequestDao
+    abstract fun cooldownEventDao(): CooldownEventDao
 
     companion object {
         @Volatile
@@ -51,6 +52,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `cooldown_events` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `packageName` TEXT NOT NULL,
+                        `appName` TEXT NOT NULL,
+                        `gameType` TEXT NOT NULL,
+                        `startedAt` INTEGER NOT NULL,
+                        `completedAt` INTEGER,
+                        `whatNextChoice` TEXT
+                    )
+                """.trimIndent())
+            }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `screen_time_requests` ADD COLUMN `resolvedAt` INTEGER"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -58,7 +83,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "kiddotime_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance

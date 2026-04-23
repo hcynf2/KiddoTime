@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Lock
@@ -40,14 +41,20 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kiddotime.app.data.LimitEvent
 import com.kiddotime.app.data.ScreenTimeRequest
 import com.kiddotime.app.viewmodel.AppUsageWithLimit
 import com.kiddotime.app.viewmodel.BedtimeState
+import com.kiddotime.app.viewmodel.CooldownStats
 import com.kiddotime.app.viewmodel.DashboardStats
+import com.kiddotime.app.data.TimeRequestStats
 import com.kiddotime.app.viewmodel.ParentViewModel
+
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,7 +62,7 @@ import kotlin.math.abs
 
 // Which bottom sheet is currently open
 private enum class DashboardSheet {
-    MostUsed, Weekly, Limits, ParentPin, AppLimits, Bedtime, Behaviour, History, TimeRequests
+    MostUsed, Weekly, Limits, ParentPin, AppLimits, Bedtime, Behaviour, History, TimeRequests, Cooldown
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,6 +80,19 @@ fun ParentScreen(
 
     Log.d("KiddoTime", "ParentScreen composable loaded")
     LaunchedEffect(Unit) { viewModel.checkPermissionAndLoad() }
+
+    // Re-check permission whenever the user returns to this screen (e.g. after
+    // granting usage-stats access in Settings and pressing back).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.recheckPermission()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Column(
         modifier = Modifier
@@ -111,94 +131,99 @@ fun ParentScreen(
                     // ── Action buttons grid ───────────────────────────────────
                     item {
                         val bedtime = uiState.bedtimeState
+                        val cooldown = uiState.cooldownStats
+                        val cooldownSubtitle = when {
+                            cooldown == null || cooldown.totalStarted == 0 -> "No data yet"
+                            else -> "${(cooldown.overallCompletionRate * 100).toInt()}% completed"
+                        }
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                ActionButton(
-                                    icon = Icons.Outlined.Star,
-                                    label = "Most Used",
-                                    subtitle = stats?.topAppsToday?.firstOrNull()
-                                        ?.usageInfo?.appName ?: "Top 5 today",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.MostUsed }
-                                )
-                                ActionButton(
-                                    icon = Icons.Outlined.DateRange,
-                                    label = "Weekly",
-                                    subtitle = if (stats?.weeklyTopAppName?.isNotEmpty() == true)
-                                        stats.weeklyTopAppName else "Last 7 days",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.Weekly }
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                ActionButton(
-                                    icon = Icons.Outlined.Timer,
-                                    label = "Time Limits",
-                                    subtitle = if ((stats?.totalAppsWithLimits ?: 0) > 0)
-                                        "${stats!!.totalAppsWithLimits} active" else "None set",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.Limits }
-                                )
-                                ActionButton(
-                                    icon = Icons.Outlined.Lock,
-                                    label = "Parent PIN",
-                                    subtitle = if (uiState.hasPin) "PIN is set" else "Not set",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.ParentPin }
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                ActionButton(
-                                    icon = Icons.Outlined.Apps,
-                                    label = "Set App Limits",
-                                    subtitle = "${uiState.appsWithLimits.size} apps installed",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.AppLimits }
-                                )
-                                ActionButton(
-                                    icon = Icons.Outlined.Schedule,
-                                    label = "Bedtime",
-                                    subtitle = if (bedtime.isEnabled)
-                                        "${bedtime.hour.toString().padStart(2,'0')}:${bedtime.minute.toString().padStart(2,'0')}  •  ${bedtime.selectedApps.size} apps"
-                                    else "Off",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.Bedtime }
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                ActionButton(
-                                    icon = Icons.Outlined.TrendingUp,
-                                    label = "Behaviour",
-                                    subtitle = if ((stats?.smoothStopStreakDays ?: 0) > 0)
-                                        "${stats!!.smoothStopStreakDays} day streak" else "Stats",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.Behaviour }
-                                )
-                                ActionButton(
-                                    icon = Icons.Outlined.History,
-                                    label = "History",
-                                    subtitle = "${uiState.historyEvents.size} events",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.History }
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                ActionButton(
-                                    icon = Icons.Outlined.Inbox,
-                                    label = "Time Requests",
-                                    subtitle = if (uiState.pendingRequests.isNotEmpty())
-                                        "${uiState.pendingRequests.size} pending" else "None pending",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { activeSheet = DashboardSheet.TimeRequests }
-                                )
-                                ActionButton(
-                                    icon = Icons.Outlined.Security,
-                                    label = "Privacy & Data",
-                                    subtitle = "Export or delete",
-                                    modifier = Modifier.weight(1f),
-                                    onClick = onPrivacyClick
-                                )
-                            }
+                            ActionButton(
+                                icon = Icons.Outlined.Star,
+                                label = "Most Used",
+                                subtitle = stats?.topAppsToday?.firstOrNull()
+                                    ?.usageInfo?.appName ?: "Top 5 today",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.MostUsed }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.DateRange,
+                                label = "Weekly",
+                                subtitle = if (stats?.weeklyTopAppName?.isNotEmpty() == true)
+                                    stats.weeklyTopAppName else "Last 7 days",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.Weekly }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.Timer,
+                                label = "Time Limits",
+                                subtitle = if ((stats?.totalAppsWithLimits ?: 0) > 0)
+                                    "${stats!!.totalAppsWithLimits} active" else "None set",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.Limits }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.Lock,
+                                label = "Parent PIN",
+                                subtitle = if (uiState.hasPin) "PIN is set" else "Not set",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.ParentPin }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.Apps,
+                                label = "Set App Limits",
+                                subtitle = "Choose time limit for any app installed",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.AppLimits }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.Schedule,
+                                label = "Bedtime",
+                                subtitle = if (bedtime.isEnabled)
+                                    "${bedtime.hour.toString().padStart(2,'0')}:${bedtime.minute.toString().padStart(2,'0')}  •  ${bedtime.selectedApps.size} apps"
+                                else "Off",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.Bedtime }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.TrendingUp,
+                                label = "Behaviour",
+                                subtitle = if ((stats?.smoothStopStreakDays ?: 0) > 0)
+                                    "${stats!!.smoothStopStreakDays} day streak" else "Stats",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.Behaviour }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.History,
+                                label = "History",
+                                subtitle = "${uiState.historyEvents.size} events",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.History }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.Extension,
+                                label = "Cooldown",
+                                subtitle = cooldownSubtitle,
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    viewModel.refreshCooldownStats()
+                                    activeSheet = DashboardSheet.Cooldown
+                                }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.Inbox,
+                                label = "Time Requests",
+                                subtitle = if (uiState.pendingRequests.isNotEmpty())
+                                    "${uiState.pendingRequests.size} pending" else "None pending",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = { activeSheet = DashboardSheet.TimeRequests }
+                            )
+                            ActionButton(
+                                icon = Icons.Outlined.Security,
+                                label = "Privacy & Data",
+                                subtitle = "Export or delete",
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = onPrivacyClick
+                            )
                         }
                     }
 
@@ -285,13 +310,19 @@ fun ParentScreen(
                 }
                 DashboardSheet.TimeRequests -> {
                     TimeRequestsSheetContent(
-                        requests = uiState.pendingRequests,
+                        requests         = uiState.pendingRequests,
+                        requestsEnabled  = uiState.requestsEnabled,
+                        onToggleRequests = { viewModel.setRequestsEnabled(it) },
+                        stats            = uiState.timeRequestStats,
                         onApprove = { req ->
                             viewModel.approveRequest(req.id, req.packageName, req.appName, req.extraMs)
                         },
-                        onDeny = { req -> viewModel.denyRequest(req.id) },
+                        onDeny    = { req -> viewModel.denyRequest(req.id) },
                         verifyPin = { viewModel.verifyPin(it) }
                     )
+                }
+                DashboardSheet.Cooldown -> {
+                    CooldownSheetContent(cooldownStats = uiState.cooldownStats)
                 }
                 null -> {}
             }
@@ -783,6 +814,201 @@ private fun BehaviourSheetContent(stats: DashboardStats, formatDuration: (Long) 
 }
 
 @Composable
+private fun CooldownSheetContent(cooldownStats: CooldownStats?) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        SheetTitle("🧩 Cooldown Effectiveness")
+
+        if (cooldownStats == null || cooldownStats.totalStarted == 0) {
+            Text(
+                text = "No cooldown sessions recorded yet.\nStats will appear after the first game overlay is triggered.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            return@Column
+        }
+
+        // ── Overall summary ─────────────────────────────────────────────────
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${cooldownStats.totalStarted}",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Started",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${cooldownStats.totalCompleted}",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Completed",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val pct = (cooldownStats.overallCompletionRate * 100).toInt()
+                    Text(
+                        text = "$pct%",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Rate",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+
+        HorizontalDivider()
+
+        // ── Per-type completion rates ────────────────────────────────────────
+        Text(
+            text = "Completion rate by game type",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        val gameTypes = listOf(
+            Triple("card",     "🎴", "Card Matching"),
+            Triple("cleanup",  "🧹", "Clean-Up"),
+            Triple("whatnext", "🌟", "What's Next?")
+        )
+        gameTypes.forEach { (type, emoji, label) ->
+            val started   = cooldownStats.startedByType[type] ?: 0
+            val completed = cooldownStats.completedByType[type] ?: 0
+            val rate      = cooldownStats.completionRateFor(type)
+            val barColor  = when {
+                rate >= 0.8f -> Color(0xFF4CAF50)
+                rate >= 0.5f -> Color(0xFFFF9800)
+                else         -> Color(0xFFF44336)
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "$emoji  $label",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = if (started > 0) "$completed / $started  (${(rate * 100).toInt()}%)"
+                               else "No data",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (started > 0) barColor
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (started > 0) {
+                    LinearProgressIndicator(
+                        progress = rate,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = barColor,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                }
+            }
+        }
+
+        // ── What's Next choices ──────────────────────────────────────────────
+        if (cooldownStats.whatNextChoiceCounts.isNotEmpty()) {
+            HorizontalDivider()
+
+            Text(
+                text = "What's Next — activity choices",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            val totalPicks = cooldownStats.whatNextChoiceCounts.values.sum().coerceAtLeast(1)
+            val activityEmojis = mapOf(
+                "Book" to "📚", "Toys" to "🧸", "Snack" to "🍎",
+                "Wash Hands" to "🧼", "Cuddle" to "🤗"
+            )
+
+            cooldownStats.whatNextChoiceCounts.entries
+                .sortedByDescending { it.value }
+                .forEach { (activity, count) ->
+                    val emoji    = activityEmojis[activity] ?: "🎯"
+                    val fraction = count.toFloat() / totalPicks
+                    val isTop    = activity == cooldownStats.topWhatNextChoice
+
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = "$emoji  $activity", style = MaterialTheme.typography.bodyMedium)
+                                if (isTop) {
+                                    StatusChip(
+                                        text = "Most chosen",
+                                        background = Color(0xFFFFF8E1),
+                                        textColor = Color(0xFFE65100)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "$count pick${if (count == 1) "" else "s"}  (${(fraction * 100).toInt()}%)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = fraction,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    }
+                }
+        }
+    }
+}
+
+@Composable
 private fun HistorySheetContent(events: List<LimitEvent>) {
     val ON_TIME_THRESHOLD_MS = 60_000L
     val dayFormat = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
@@ -900,6 +1126,9 @@ private fun HistorySheetContent(events: List<LimitEvent>) {
 @Composable
 private fun TimeRequestsSheetContent(
     requests: List<ScreenTimeRequest>,
+    requestsEnabled: Boolean,
+    onToggleRequests: (Boolean) -> Unit,
+    stats: TimeRequestStats?,
     onApprove: (ScreenTimeRequest) -> Unit,
     onDeny: (ScreenTimeRequest) -> Unit,
     verifyPin: (String) -> Boolean
@@ -963,12 +1192,45 @@ private fun TimeRequestsSheetContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp)
             .padding(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SheetTitle("📥 Time Requests")
 
+        // ── Parent toggle ─────────────────────────────────────────────────────
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Allow time requests",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (requestsEnabled) "Child can ask for 30 min extra (1×/day)"
+                               else "Button is hidden on the child's screen",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = requestsEnabled, onCheckedChange = onToggleRequests)
+            }
+        }
+
+        HorizontalDivider()
+
+        // ── Pending requests ──────────────────────────────────────────────────
         if (requests.isEmpty()) {
             Text(
                 text = "No pending requests.",
@@ -976,54 +1238,195 @@ private fun TimeRequestsSheetContent(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxHeight(0.75f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(requests) { req ->
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                        modifier = Modifier.fillMaxWidth()
+            requests.forEach { req ->
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = req.appName,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "+${formatLimitDuration(req.extraMs)} requested",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = { pendingApprovalRequest = req },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                ) { Text("Approve") }
-                                OutlinedButton(
-                                    onClick = { onDeny(req) },
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                ) { Text("Deny") }
-                            }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = req.appName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "+${formatLimitDuration(req.extraMs)} requested",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { pendingApprovalRequest = req },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) { Text("Approve") }
+                            OutlinedButton(
+                                onClick = { onDeny(req) },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) { Text("Deny") }
                         }
                     }
                 }
-                item { Spacer(modifier = Modifier.height(16.dp)) }
             }
         }
+
+        // ── Request analytics ─────────────────────────────────────────────────
+        if (stats != null && stats.totalRequests > 0) {
+            HorizontalDivider()
+
+            Text(
+                text = "Request History",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "${stats.totalRequests}",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = "Total",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "${stats.totalApproved}",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = "Approved",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "${stats.totalDenied}",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = "Denied",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+
+            val resolved = stats.totalApproved + stats.totalDenied
+            if (resolved > 0) {
+                val pct = (stats.approvalRate * 100).toInt()
+                val barColor = when {
+                    pct >= 70 -> Color(0xFF4CAF50)
+                    pct >= 40 -> Color(0xFFFF9800)
+                    else      -> Color(0xFFF44336)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Approval rate",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "$pct%",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = barColor
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = stats.approvalRate,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = barColor,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                }
+            }
+
+            if (stats.avgResponseMs != null) {
+                val mins = stats.avgResponseMs / 60_000
+                val responseText = when {
+                    mins < 1    -> "under a minute"
+                    mins < 60   -> "$mins min"
+                    else        -> "${mins / 60}h ${mins % 60}m"
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Avg response time",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = responseText,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            if (stats.mostRequestedApp.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Most requested app",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = stats.mostRequestedApp,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
     }
 }
 

@@ -12,14 +12,26 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
+import com.kiddotime.app.data.AppDatabase
+import com.kiddotime.app.data.CooldownEventRepository
+import com.kiddotime.app.data.GamePreferences
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class OverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
+    private lateinit var gamePrefs: GamePreferences
+    private lateinit var cooldownRepo: CooldownEventRepository
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var overlayView: FrameLayout? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var homeReceiver: android.content.BroadcastReceiver? = null
     private var currentLockedPackage: String = ""
+    @Volatile private var currentCooldownEventId: Long = -1L
 
     companion object {
         const val EXTRA_APP_NAME = "app_name"
@@ -50,6 +62,8 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        gamePrefs = GamePreferences(applicationContext)
+        cooldownRepo = CooldownEventRepository(AppDatabase.getDatabase(applicationContext).cooldownEventDao())
         Log.d("KiddoTime", "OverlayService onCreate called")
     }
 
@@ -72,27 +86,6 @@ class OverlayService : Service() {
         }
         return START_NOT_STICKY
     }
-
-//    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-//        val appName = intent?.getStringExtra(EXTRA_APP_NAME) ?: "this app"
-//        val lockedPackage = intent?.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
-//        val lockScreenOnly = intent?.getBooleanExtra("lock_screen_only", false) ?: false
-//
-//        Log.d("KiddoTime", "OverlayService onStartCommand lockScreenOnly=$lockScreenOnly")
-//
-//        mainHandler.post {
-//            if (overlayView == null) {
-//                if (lockScreenOnly) {
-//                    showLockScreen(appName, lockedPackage)
-//                } else {
-//                    showGameOverlay(appName, lockedPackage)
-//                }
-//            } else {
-//                Log.d("KiddoTime", "Overlay already showing - ignoring")
-//            }
-//        }
-//        return START_NOT_STICKY
-//    }
 
     private fun registerHomeReceiver(lockedPackage: String, appName: String) {
         homeReceiver = object : android.content.BroadcastReceiver() {
@@ -154,21 +147,69 @@ class OverlayService : Service() {
     }
 
     private fun showGameOverlay(appName: String, lockedPackage: String) {
-        Log.d("KiddoTime", "showGameOverlay called")
+        val chosenGame = gamePrefs.pickGame()
+        Log.d("KiddoTime", "showGameOverlay: chosen=$chosenGame")
+
+        // Record that a cooldown started; ID is stored for completion tracking.
+        currentCooldownEventId = -1L
+        serviceScope.launch {
+            val id = cooldownRepo.recordStart(lockedPackage, appName, chosenGame)
+            currentCooldownEventId = id
+        }
 
         val container = FrameLayout(this)
-        val gameView = CardMatchingGameView(this)
 
-        gameView.onAllRoundsComplete = {
-            Log.d("KiddoTime", "Game complete callback triggered")
-            mainHandler.post {
-                Log.d("KiddoTime", "Removing game overlay, showing lock screen")
-                removeOverlay()
-                showLockScreen(appName, lockedPackage)
+        when (chosenGame) {
+            GamePreferences.GAME_CLEANUP -> {
+                val gameView = CleanUpGameView(this)
+                gameView.onAllItemsPlaced = {
+                    Log.d("KiddoTime", "CleanUp complete — transitioning to lock screen")
+                    val eventId = currentCooldownEventId
+                    gamePrefs.onGameComplete(GamePreferences.GAME_CLEANUP)
+                    serviceScope.launch {
+                        if (eventId > 0) cooldownRepo.recordComplete(eventId, System.currentTimeMillis())
+                    }
+                    mainHandler.post {
+                        removeOverlay()
+                        showLockScreen(appName, lockedPackage)
+                    }
+                }
+                container.addView(gameView)
+            }
+            GamePreferences.GAME_WHAT_NEXT -> {
+                val gameView = WhatNextGameView(this)
+                gameView.onActivityChosen = { chosenLabel ->
+                    Log.d("KiddoTime", "WhatNext complete ($chosenLabel) — transitioning to lock screen")
+                    val eventId = currentCooldownEventId
+                    gamePrefs.onGameComplete(GamePreferences.GAME_WHAT_NEXT)
+                    serviceScope.launch {
+                        if (eventId > 0) cooldownRepo.recordComplete(eventId, System.currentTimeMillis(), whatNextChoice = chosenLabel)
+                    }
+                    mainHandler.post {
+                        removeOverlay()
+                        showLockScreen(appName, lockedPackage)
+                    }
+                }
+                container.addView(gameView)
+            }
+            else -> { // GAME_CARD (default / fallback)
+                val gameView = CardMatchingGameView(this)
+                gameView.onAllRoundsComplete = {
+                    Log.d("KiddoTime", "CardMatching complete — transitioning to lock screen")
+                    val eventId = currentCooldownEventId
+                    gamePrefs.onGameComplete(GamePreferences.GAME_CARD)
+                    serviceScope.launch {
+                        if (eventId > 0) cooldownRepo.recordComplete(eventId, System.currentTimeMillis())
+                    }
+                    mainHandler.post {
+                        removeOverlay()
+                        showLockScreen(appName, lockedPackage)
+                    }
+                }
+                container.addView(gameView)
             }
         }
 
-        container.addView(gameView)
         overlayView = container
 
         try {
@@ -304,6 +345,7 @@ class OverlayService : Service() {
     }
     override fun onDestroy() {
         super.onDestroy()
+        serviceScope.cancel()
         unregisterHomeReceiver()
         mainHandler.removeCallbacksAndMessages(null)
         removeOverlay()

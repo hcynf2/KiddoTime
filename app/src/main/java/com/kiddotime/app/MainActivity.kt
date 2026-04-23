@@ -22,6 +22,7 @@ import com.kiddotime.app.screens.ChildScreen
 import com.kiddotime.app.screens.DataPrivacyScreen
 import com.kiddotime.app.screens.ModeSelectScreen
 import com.kiddotime.app.screens.ParentScreen
+import com.kiddotime.app.screens.SplashScreen
 import com.kiddotime.app.service.AppMonitorService
 import com.kiddotime.app.ui.theme.KiddoTimeTheme
 
@@ -91,8 +92,15 @@ fun KiddoTimeApp(limitReachedState: MutableState<String?>) {
 
     NavHost(
         navController = navController,
-        startDestination = Routes.MODE_SELECT
+        startDestination = Routes.SPLASH
     ) {
+        composable(Routes.SPLASH) {
+            SplashScreen(onTimeout = {
+                navController.navigate(Routes.MODE_SELECT) {
+                    popUpTo(Routes.SPLASH) { inclusive = true }
+                }
+            })
+        }
         composable(Routes.MODE_SELECT) {
             Log.d("KiddoTime", "ModeSelectScreen loaded")
             ModeSelectScreen(
