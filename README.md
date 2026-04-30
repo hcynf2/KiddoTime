@@ -6,16 +6,6 @@ KiddoTime is an Android parental screen-time control app that enforces daily app
 
 ---
 
-## Screenshots
-
-> *(Add screenshots here once available)*
-
-| Splash | Mode Select | Parent Dashboard | Child Dashboard | Cooldown Game |
-|--------|-------------|-----------------|-----------------|---------------|
-| | | | | |
-
----
-
 ## Features
 
 ### For Parents
