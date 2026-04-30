@@ -103,3 +103,30 @@ AppMonitorService  →  OverlayService.start()
 - No `fallbackToDestructiveMigration` — always write explicit migrations
 - Bottom sheets opened via a `DashboardSheet` enum state variable, not separate nav routes
 - Compile-check after every set of changes: `./gradlew :app:compileDebugKotlin`
+
+---
+
+## Session Log
+
+<!-- Entries below are appended automatically by a Claude Code Stop hook -->
+
+- 2026-04-23 20:56: Claude Code session
+- 2026-04-23 20:57: Claude Code session
+- 2026-04-24 00:38: Claude Code session
+- 2026-04-24 00:43: Claude Code session
+- 2026-04-26 10:09: Claude Code session
+- 2026-04-26 10:16: Claude Code session
+- 2026-04-26 10:22: Claude Code session
+- 2026-04-26 10:27: Claude Code session
+- 2026-04-26 10:35: Claude Code session
+- 2026-04-26 10:56: Claude Code session
+- 2026-04-26 11:40: Claude Code session
+- 2026-04-26 11:44: Claude Code session
+- 2026-04-26 16:07: Claude Code session
+- 2026-04-28 06:24: Claude Code session
+- 2026-04-28 07:44: Claude Code session
+- 2026-04-28 07:46: Claude Code session
+- 2026-04-28 07:55: Claude Code session
+- 2026-04-30 12:47: Claude Code session
+- 2026-04-30 13:55: Claude Code session
+- 2026-04-30 14:04: Claude Code session

@@ -5,6 +5,7 @@ import android.graphics.drawable.Drawable
 import android.provider.Settings
 import android.util.Log
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +20,8 @@ import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Schedule
@@ -76,6 +79,7 @@ fun ParentScreen(
 
     var selectedApp by remember { mutableStateOf<AppUsageWithLimit?>(null) }
     var activeSheet by remember { mutableStateOf<DashboardSheet?>(null) }
+    var showHelpDialog by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     Log.d("KiddoTime", "ParentScreen composable loaded")
@@ -97,14 +101,28 @@ fun ParentScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 16.dp)
+            .padding(horizontal = 16.dp)
+            .padding(top = 16.dp)
     ) {
-        Text(
-            text = "Parent Dashboard",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Screen Time",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            IconButton(onClick = { showHelpDialog = true }) {
+                Icon(
+                    imageVector = Icons.Outlined.Info,
+                    contentDescription = "Help",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
 
         when {
             !uiState.hasPermission -> {
@@ -121,113 +139,147 @@ fun ParentScreen(
 
             else -> {
                 val stats = uiState.dashboardStats
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(0.dp)) {
 
-                    // ── Always-visible overview ───────────────────────────────
+                    // ── Overview card ─────────────────────────────────────────
                     if (stats != null) {
-                        item { OverviewCard(stats, viewModel::formatDuration) }
+                        item {
+                            OverviewCard(
+                                stats = stats,
+                                formatDuration = viewModel::formatDuration,
+                                onSeeAll = { activeSheet = DashboardSheet.MostUsed }
+                            )
+                        }
                     }
 
-                    // ── Action buttons grid ───────────────────────────────────
+                    // ── ACTIVITY section ──────────────────────────────────────
+                    item { SectionLabel("ACTIVITY") }
                     item {
-                        val bedtime = uiState.bedtimeState
-                        val cooldown = uiState.cooldownStats
-                        val cooldownSubtitle = when {
-                            cooldown == null || cooldown.totalStarted == 0 -> "No data yet"
-                            else -> "${(cooldown.overallCompletionRate * 100).toInt()}% completed"
-                        }
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            ActionButton(
+                        SettingsGroup {
+                            SettingsRow(
                                 icon = Icons.Outlined.Star,
+                                iconColor = Color(0xFFFF9F0A),
                                 label = "Most Used",
-                                subtitle = stats?.topAppsToday?.firstOrNull()
-                                    ?.usageInfo?.appName ?: "Top 5 today",
-                                modifier = Modifier.fillMaxWidth(),
+                                subtitle = stats?.topAppsToday?.firstOrNull()?.usageInfo?.appName ?: "Top 5 today",
+                                showDivider = true,
                                 onClick = { activeSheet = DashboardSheet.MostUsed }
                             )
-                            ActionButton(
+                            SettingsRow(
                                 icon = Icons.Outlined.DateRange,
+                                iconColor = Color(0xFF007AFF),
                                 label = "Weekly",
-                                subtitle = if (stats?.weeklyTopAppName?.isNotEmpty() == true)
-                                    stats.weeklyTopAppName else "Last 7 days",
-                                modifier = Modifier.fillMaxWidth(),
+                                subtitle = if (stats?.weeklyTopAppName?.isNotEmpty() == true) stats.weeklyTopAppName else "Last 7 days",
+                                showDivider = true,
                                 onClick = { activeSheet = DashboardSheet.Weekly }
                             )
-                            ActionButton(
-                                icon = Icons.Outlined.Timer,
-                                label = "Time Limits",
-                                subtitle = if ((stats?.totalAppsWithLimits ?: 0) > 0)
-                                    "${stats!!.totalAppsWithLimits} active" else "None set",
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { activeSheet = DashboardSheet.Limits }
-                            )
-                            ActionButton(
-                                icon = Icons.Outlined.Lock,
-                                label = "Parent PIN",
-                                subtitle = if (uiState.hasPin) "PIN is set" else "Not set",
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { activeSheet = DashboardSheet.ParentPin }
-                            )
-                            ActionButton(
-                                icon = Icons.Outlined.Apps,
-                                label = "Set App Limits",
-                                subtitle = "Choose time limit for any app installed",
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { activeSheet = DashboardSheet.AppLimits }
-                            )
-                            ActionButton(
-                                icon = Icons.Outlined.Schedule,
-                                label = "Bedtime",
-                                subtitle = if (bedtime.isEnabled)
-                                    "${bedtime.hour.toString().padStart(2,'0')}:${bedtime.minute.toString().padStart(2,'0')}  •  ${bedtime.selectedApps.size} apps"
-                                else "Off",
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { activeSheet = DashboardSheet.Bedtime }
-                            )
-                            ActionButton(
+                            SettingsRow(
                                 icon = Icons.Outlined.TrendingUp,
+                                iconColor = Color(0xFF34C759),
                                 label = "Behaviour",
-                                subtitle = if ((stats?.smoothStopStreakDays ?: 0) > 0)
-                                    "${stats!!.smoothStopStreakDays} day streak" else "Stats",
-                                modifier = Modifier.fillMaxWidth(),
+                                subtitle = if ((stats?.smoothStopStreakDays ?: 0) > 0) "${stats!!.smoothStopStreakDays} day streak" else "Stats",
+                                showDivider = true,
                                 onClick = { activeSheet = DashboardSheet.Behaviour }
                             )
-                            ActionButton(
+                            SettingsRow(
                                 icon = Icons.Outlined.History,
+                                iconColor = Color(0xFF8E8E93),
                                 label = "History",
                                 subtitle = "${uiState.historyEvents.size} events",
-                                modifier = Modifier.fillMaxWidth(),
+                                showDivider = false,
                                 onClick = { activeSheet = DashboardSheet.History }
                             )
-                            ActionButton(
-                                icon = Icons.Outlined.Extension,
-                                label = "Cooldown",
-                                subtitle = cooldownSubtitle,
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = {
-                                    viewModel.refreshCooldownStats()
-                                    activeSheet = DashboardSheet.Cooldown
-                                }
+                        }
+                    }
+
+                    // ── LIMIT USAGE section ───────────────────────────────────
+                    item { SectionLabel("LIMIT USAGE") }
+                    item {
+                        val bedtime = uiState.bedtimeState
+                        SettingsGroup {
+                            SettingsRow(
+                                icon = Icons.Outlined.Timer,
+                                iconColor = Color(0xFFFF9500),
+                                label = "Time Limits",
+                                subtitle = if ((stats?.totalAppsWithLimits ?: 0) > 0) "${stats!!.totalAppsWithLimits} active" else "None set",
+                                showDivider = true,
+                                onClick = { activeSheet = DashboardSheet.Limits }
                             )
-                            ActionButton(
+                            SettingsRow(
+                                icon = Icons.Outlined.Apps,
+                                iconColor = Color(0xFFAF52DE),
+                                label = "Set App Limits",
+                                subtitle = "Choose time limit for any app",
+                                showDivider = true,
+                                onClick = { activeSheet = DashboardSheet.AppLimits }
+                            )
+                            SettingsRow(
+                                icon = Icons.Outlined.Schedule,
+                                iconColor = Color(0xFF5856D6),
+                                label = "Bedtime",
+                                subtitle = if (bedtime.isEnabled)
+                                    "${bedtime.hour.toString().padStart(2, '0')}:${bedtime.minute.toString().padStart(2, '0')} • ${bedtime.selectedApps.size} apps"
+                                else "Off",
+                                showDivider = false,
+                                onClick = { activeSheet = DashboardSheet.Bedtime }
+                            )
+                        }
+                    }
+
+                    // ── REQUESTS & SECURITY section ───────────────────────────
+                    item { SectionLabel("REQUESTS & SECURITY") }
+                    item {
+                        SettingsGroup {
+                            SettingsRow(
                                 icon = Icons.Outlined.Inbox,
+                                iconColor = Color(0xFF32ADE6),
                                 label = "Time Requests",
-                                subtitle = if (uiState.pendingRequests.isNotEmpty())
-                                    "${uiState.pendingRequests.size} pending" else "None pending",
-                                modifier = Modifier.fillMaxWidth(),
+                                subtitle = if (uiState.pendingRequests.isNotEmpty()) "${uiState.pendingRequests.size} pending" else "None pending",
+                                showDivider = true,
                                 onClick = { activeSheet = DashboardSheet.TimeRequests }
                             )
-                            ActionButton(
+                            SettingsRow(
+                                icon = Icons.Outlined.Lock,
+                                iconColor = Color(0xFF636366),
+                                label = "Parent PIN",
+                                subtitle = if (uiState.hasPin) "PIN is set" else "Not set",
+                                showDivider = true,
+                                onClick = { activeSheet = DashboardSheet.ParentPin }
+                            )
+                            SettingsRow(
                                 icon = Icons.Outlined.Security,
+                                iconColor = Color(0xFFFF3B30),
                                 label = "Privacy & Data",
                                 subtitle = "Export or delete",
-                                modifier = Modifier.fillMaxWidth(),
+                                showDivider = false,
                                 onClick = onPrivacyClick
                             )
                         }
                     }
 
-                    item { Spacer(modifier = Modifier.height(16.dp)) }
+                    // ── COOLDOWN GAMES section ────────────────────────────────
+                    item { SectionLabel("COOLDOWN GAMES") }
+                    item {
+                        val cooldown = uiState.cooldownStats
+                        val cooldownSubtitle = when {
+                            cooldown == null || cooldown.totalStarted == 0 -> "No data yet"
+                            else -> "${(cooldown.overallCompletionRate * 100).toInt()}% completed"
+                        }
+                        SettingsGroup {
+                            SettingsRow(
+                                icon = Icons.Outlined.Extension,
+                                iconColor = Color(0xFF00C7BE),
+                                label = "Cooldown Stats",
+                                subtitle = cooldownSubtitle,
+                                showDivider = false,
+                                onClick = {
+                                    viewModel.refreshCooldownStats()
+                                    activeSheet = DashboardSheet.Cooldown
+                                }
+                            )
+                        }
+                    }
+
+                    item { Spacer(modifier = Modifier.height(32.dp)) }
                 }
             }
         }
@@ -329,6 +381,57 @@ fun ParentScreen(
         }
     }
 
+    // ── Help dialog ───────────────────────────────────────────────────────────
+    if (showHelpDialog) {
+        AlertDialog(
+            onDismissRequest = { showHelpDialog = false },
+            icon = { Icon(Icons.Outlined.Info, contentDescription = null) },
+            title = { Text("How to use KiddoTime") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    HelpSection(
+                        heading = "Set App Limits",
+                        body = "Tap \"Set App Limits\" to pick any installed app and assign a daily time limit. Once the limit is reached, a cooldown game appears before the child can keep using the device."
+                    )
+                    HelpSection(
+                        heading = "Time Limits overview",
+                        body = "\"Time Limits\" shows all apps with an active limit, their current usage, and lets you set a total daily screen-time cap across all apps."
+                    )
+                    HelpSection(
+                        heading = "Bedtime",
+                        body = "Enable Bedtime to automatically lock selected apps at a chosen time each night. Locks release at 6 AM. Warnings appear 30 and 10 minutes before bedtime."
+                    )
+                    HelpSection(
+                        heading = "Parent PIN",
+                        body = "Set a 4–6 digit PIN here. The PIN is required to dismiss the lock screen after a cooldown game, and to approve time-extension requests."
+                    )
+                    HelpSection(
+                        heading = "Time Requests",
+                        body = "When enabled, the child can request 30 extra minutes once per day. You'll see pending requests here and can approve (PIN required) or deny them."
+                    )
+                    HelpSection(
+                        heading = "Cooldown games",
+                        body = "When a limit fires, a mini-game (Card Matching, Clean-Up, or What's Next?) appears. The child must complete it before returning to the app or choosing another activity."
+                    )
+                    HelpSection(
+                        heading = "Behaviour & History",
+                        body = "\"Behaviour\" tracks how quickly your child stops apps after limits fire and shows a smooth-stop streak. \"History\" lists every limit event with timestamps."
+                    )
+                    HelpSection(
+                        heading = "Most Used & Weekly",
+                        body = "See which apps your child uses most today and over the past 7 days, including longest sessions and daily averages."
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showHelpDialog = false }) { Text("Got it") }
+            }
+        )
+    }
+
     // ── Set-limit dialog (shown over whatever is visible) ─────────────────────
     selectedApp?.let { app ->
         SetLimitDialog(
@@ -351,49 +454,67 @@ fun ParentScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Action button
+// Section label, settings group, settings row
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ActionButton(
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 4.dp, top = 20.dp, bottom = 6.dp)
+    )
+}
+
+@Composable
+private fun SettingsGroup(content: @Composable () -> Unit) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column { content() }
+    }
+}
+
+@Composable
+private fun SettingsRow(
     icon: ImageVector,
+    iconColor: Color,
     label: String,
     subtitle: String,
-    modifier: Modifier = Modifier,
+    showDivider: Boolean = true,
     onClick: () -> Unit
 ) {
-    Card(
-        onClick = onClick,
-        modifier = modifier,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        shape = RoundedCornerShape(16.dp)
-    ) {
+    Column {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 13.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(40.dp)
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .background(iconColor, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = subtitle,
@@ -404,10 +525,16 @@ private fun ActionButton(
                 )
             }
             Icon(
-                imageVector = Icons.Outlined.Apps, // chevron-right substitute
+                imageVector = Icons.Outlined.KeyboardArrowRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp)
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        if (showDivider) {
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 62.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
             )
         }
     }
@@ -418,63 +545,118 @@ private fun ActionButton(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-fun OverviewCard(stats: DashboardStats, formatDuration: (Long) -> String) {
+fun OverviewCard(
+    stats: DashboardStats,
+    formatDuration: (Long) -> String,
+    onSeeAll: () -> Unit = {}
+) {
     val deltaAbs = abs(stats.todayVsYesterdayMs)
-    val deltaText = when {
-        stats.todayVsYesterdayMs > 0 -> "▲ ${formatDuration(deltaAbs)} more"
-        stats.todayVsYesterdayMs < 0 -> "▼ ${formatDuration(deltaAbs)} less"
-        else -> "Same as yesterday"
-    }
-    val deltaColor = when {
-        stats.todayVsYesterdayMs > 0 -> Color(0xFFE53935)
-        stats.todayVsYesterdayMs < 0 -> Color(0xFF43A047)
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val isMore = stats.todayVsYesterdayMs > 0
+    val hasChange = deltaAbs > 0
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Text(
-                text = "📱 Screen Time Overview",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                StatCell(
-                    modifier = Modifier.weight(1f),
-                    label = "Today",
-                    value = formatDuration(stats.totalScreenTimeToday),
-                    large = true
+        Column {
+            // ── Daily average + delta ─────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(top = 16.dp, bottom = 14.dp)
+            ) {
+                Text(
+                    text = "Daily Average",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                StatCell(
-                    modifier = Modifier.weight(1f),
-                    label = "vs Yesterday",
-                    value = deltaText,
-                    valueColor = deltaColor
-                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = formatDuration(stats.dailyAverageMs),
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (hasChange) {
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "${if (isMore) "▲" else "▼"} ${formatDuration(deltaAbs)} vs yesterday",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isMore) Color(0xFFF44336) else Color(0xFF34C759),
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // ── Stat row ──────────────────────────────────────────────────
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    MiniStat(
+                        modifier = Modifier.weight(1f),
+                        label = "Today",
+                        value = formatDuration(stats.totalScreenTimeToday)
+                    )
+                    MiniStat(
+                        modifier = Modifier.weight(1f),
+                        label = "Apps Used",
+                        value = "${stats.appsUsedToday} / ${stats.totalInstalledApps}"
+                    )
+                    MiniStat(
+                        modifier = Modifier.weight(1f),
+                        label = "7-Day Avg",
+                        value = formatDuration(stats.dailyAverageMs)
+                    )
+                }
             }
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 12.dp),
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)
-            )
-            Row(modifier = Modifier.fillMaxWidth()) {
-                StatCell(
-                    modifier = Modifier.weight(1f),
-                    label = "Apps Used Today",
-                    value = "${stats.appsUsedToday} / ${stats.totalInstalledApps}"
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+            // ── "See All" row ─────────────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onSeeAll)
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "See All App Activity",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
                 )
-                StatCell(
-                    modifier = Modifier.weight(1f),
-                    label = "7-Day Daily Avg",
-                    value = formatDuration(stats.dailyAverageMs)
+                Icon(
+                    imageVector = Icons.Outlined.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun MiniStat(modifier: Modifier = Modifier, label: String, value: String) {
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 
@@ -2034,6 +2216,22 @@ private fun StatusChip(text: String, background: Color, textColor: Color) {
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelSmall,
             color = textColor
+        )
+    }
+}
+
+@Composable
+private fun HelpSection(heading: String, body: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = heading,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

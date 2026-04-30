@@ -1,15 +1,21 @@
 package com.kiddotime.app.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -19,6 +25,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kiddotime.app.data.AppLimit
 import com.kiddotime.app.data.BadgeId
 import com.kiddotime.app.viewmodel.ChildViewModel
+import java.util.Calendar
 
 @Composable
 fun ChildScreen(viewModel: ChildViewModel = viewModel()) {
@@ -31,9 +38,7 @@ fun ChildScreen(viewModel: ChildViewModel = viewModel()) {
             title = { Text("You earned a star!") },
             text = { Text("⭐ You earned a star! Great job stopping on time!") },
             confirmButton = {
-                TextButton(onClick = { viewModel.clearCelebration() }) {
-                    Text("OK")
-                }
+                TextButton(onClick = { viewModel.clearCelebration() }) { Text("OK") }
             }
         )
     }
@@ -66,23 +71,8 @@ fun ChildScreen(viewModel: ChildViewModel = viewModel()) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = { viewModel.markBadgesSeen() }) {
-                    Text("OK")
-                }
+                TextButton(onClick = { viewModel.markBadgesSeen() }) { Text("OK") }
             }
-        )
-    }
-
-    // Ask for more time dialog
-    var showAskMoreTimeDialog by remember { mutableStateOf(false) }
-    if (showAskMoreTimeDialog) {
-        AskMoreTimeDialog(
-            limitedApps = uiState.limitedApps,
-            onRequest = { pkg, appName ->
-                viewModel.submitRequest(pkg, appName)
-                showAskMoreTimeDialog = false
-            },
-            onDismiss = { showAskMoreTimeDialog = false }
         )
     }
 
@@ -93,101 +83,271 @@ fun ChildScreen(viewModel: ChildViewModel = viewModel()) {
         return
     }
 
+    val canAsk = uiState.limitedApps.isNotEmpty()
+            && uiState.requestsEnabled
+            && uiState.todayRequestCount < 1
+
+    val askBlockReason = when {
+        !uiState.requestsEnabled       -> "Asking for more time is turned off"
+        uiState.todayRequestCount >= 1 -> "You've already asked today — come back tomorrow!"
+        else                           -> null
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "Hi there! 👋",
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold
-        )
-        Text(
-            text = "Here's how you're doing today",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        // ── Header gradient ───────────────────────────────────────────────────
+        ChildHeader(stars = uiState.starBalance, streakDays = uiState.streakDays)
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        StarBalanceCard(stars = uiState.starBalance)
-        StreakCard(streakDays = uiState.streakDays)
-        TodayProgressCard(onTime = uiState.todayOnTimeStops, total = uiState.todayTotalStops)
-
-        // Badges section
-        if (uiState.earnedBadges.isNotEmpty()) {
-            BadgesSection(badges = uiState.earnedBadges)
-        }
-
-        // Ask for more time button
-        val canAsk = uiState.limitedApps.isNotEmpty()
-                  && uiState.requestsEnabled
-                  && uiState.todayRequestCount < 1
-        val askBlockReason = when {
-            !uiState.requestsEnabled       -> "Asking for more time is turned off"
-            uiState.todayRequestCount >= 1 -> "You've already asked today — come back tomorrow!"
-            else                           -> null
-        }
-
-        ElevatedButton(
-            onClick = { showAskMoreTimeDialog = true },
-            enabled = canAsk,
-            modifier = Modifier.fillMaxWidth()
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .padding(top = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("Ask for More Time")
-        }
+            // ── Streak week strip ─────────────────────────────────────────────
+            StreakWeekStrip(streakDays = uiState.streakDays)
 
-        if (askBlockReason != null) {
+            // ── 3 stat cards ──────────────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                StatCard(
+                    modifier = Modifier.weight(1f),
+                    emoji = "⭐",
+                    value = "${uiState.starBalance}",
+                    label = "Stars",
+                    accentColor = Color(0xFFFFC107)
+                )
+                StatCard(
+                    modifier = Modifier.weight(1f),
+                    emoji = "🔥",
+                    value = "${uiState.streakDays}d",
+                    label = "Streak",
+                    accentColor = Color(0xFFFF6D00)
+                )
+                StatCard(
+                    modifier = Modifier.weight(1f),
+                    emoji = "✅",
+                    value = "${uiState.todayOnTimeStops}/${uiState.todayTotalStops}",
+                    label = "Stops",
+                    accentColor = Color(0xFF2E7D32)
+                )
+            }
+
+            // ── Badges ────────────────────────────────────────────────────────
+            if (uiState.earnedBadges.isNotEmpty()) {
+                BadgesSection(badges = uiState.earnedBadges)
+            }
+
+            // ── Need more time ────────────────────────────────────────────────
+            if (uiState.limitedApps.isNotEmpty() || askBlockReason != null) {
+                NeedMoreTimeSection(
+                    limitedApps = uiState.limitedApps,
+                    canAsk = canAsk,
+                    askBlockReason = askBlockReason,
+                    onAsk = { pkg, appName -> viewModel.submitRequest(pkg, appName) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Header
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun ChildHeader(stars: Int, streakDays: Int) {
+    val streakText = when {
+        streakDays == 0 -> "Start your streak today! 💪"
+        streakDays == 1 -> "Great start — keep going! 🌟"
+        streakDays < 5  -> "You're on a roll — $streakDays days! 🔥"
+        else            -> "Amazing — $streakDays day streak! 🏆"
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        MaterialTheme.colorScheme.background
+                    )
+                )
+            )
+            .padding(horizontal = 20.dp)
+            .padding(top = 28.dp, bottom = 24.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    text = "Hi there! 👋",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = streakText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            // Star balance badge
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFFFFC107).copy(alpha = 0.2f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(text = "⭐", fontSize = 18.sp)
+                    Text(
+                        text = "$stars",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF6D4C00)
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streak week strip
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun StreakWeekStrip(streakDays: Int) {
+    val dayLabels = listOf("S", "M", "T", "W", "T", "F", "S")
+    val todayIndex = remember {
+        Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1  // 0 = Sunday
+    }
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            dayLabels.forEachIndexed { index, label ->
+                // A day is filled if it's before today and within the streak window
+                val isFilled = index < todayIndex && index > (todayIndex - streakDays)
+                val isToday  = index == todayIndex
+                DayBubble(label = label, isFilled = isFilled, isToday = isToday)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DayBubble(label: String, isFilled: Boolean, isToday: Boolean) {
+    val primary  = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
+    val outline  = MaterialTheme.colorScheme.outline
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(if (isFilled) primary else Color.Transparent)
+                .then(
+                    when {
+                        isToday  -> Modifier.border(2.dp, primary, CircleShape)
+                        !isFilled -> Modifier.border(1.dp, outline.copy(alpha = 0.35f), CircleShape)
+                        else     -> Modifier
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                text = askBlockReason,
-                style = MaterialTheme.typography.bodySmall,
+                text = if (isFilled) "✓" else label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = when {
+                    isFilled -> onPrimary
+                    isToday  -> primary
+                    else     -> outline.copy(alpha = 0.6f)
+                }
+            )
+        }
+        // Dot indicator below today's bubble
+        Box(
+            modifier = Modifier
+                .size(4.dp)
+                .background(
+                    if (isToday) primary else Color.Transparent,
+                    CircleShape
+                )
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stat card
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun StatCard(
+    modifier: Modifier = Modifier,
+    emoji: String,
+    value: String,
+    label: String,
+    accentColor: Color
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = accentColor.copy(alpha = 0.12f)),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp, horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(text = emoji, fontSize = 26.sp)
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = accentColor.copy(alpha = 0.85f)
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
+                textAlign = TextAlign.Center
             )
         }
     }
 }
 
-// ── Ask for more time dialog ──────────────────────────────────────────────────
-
-@Composable
-private fun AskMoreTimeDialog(
-    limitedApps: List<AppLimit>,
-    onRequest: (packageName: String, appName: String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Ask for More Time") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Which app do you want more time for?",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                limitedApps.forEach { appLimit ->
-                    OutlinedButton(
-                        onClick = { onRequest(appLimit.packageName, appLimit.appName) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Ask 30 min — ${appLimit.appName}")
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
-    )
-}
-
-// ── Badges section ────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Badges
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun BadgesSection(badges: List<BadgeId>) {
@@ -208,16 +368,16 @@ private fun BadgesSection(badges: List<BadgeId>) {
 @Composable
 private fun BadgeChip(badge: BadgeId) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.secondaryContainer,
         tonalElevation = 2.dp
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text(text = badge.emoji, fontSize = 24.sp)
+            Text(text = badge.emoji, fontSize = 26.sp)
             Text(
                 text = badge.title,
                 style = MaterialTheme.typography.labelSmall,
@@ -228,146 +388,78 @@ private fun BadgeChip(badge: BadgeId) {
     }
 }
 
-// ── Star balance ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Need more time
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun StarBalanceCard(stars: Int) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
+private fun NeedMoreTimeSection(
+    limitedApps: List<AppLimit>,
+    canAsk: Boolean,
+    askBlockReason: String?,
+    onAsk: (packageName: String, appName: String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Need more time?",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
         )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(
-                    text = "Your Stars",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (stars == 0) "Stop apps on time to earn stars!"
-                           else "Keep stopping on time!",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "⭐", fontSize = 32.sp)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "$stars",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-    }
-}
 
-// ── Streak ────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun StreakCard(streakDays: Int) {
-    val (emoji, message) = when {
-        streakDays == 0 -> "💪" to "Stop an app on time to start your streak!"
-        streakDays == 1 -> "🌟" to "Great start! Come back tomorrow!"
-        streakDays < 5  -> "🔥" to "You're on a roll! Keep it going!"
-        else            -> "🏆" to "Incredible streak — you're a champion!"
-    }
-
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Day Streak",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(start = 16.dp)
+        if (askBlockReason != null) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(text = emoji, fontSize = 28.sp)
                 Text(
-                    text = "$streakDays",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-    }
-}
-
-// ── Today's progress ──────────────────────────────────────────────────────────
-
-@Composable
-private fun TodayProgressCard(onTime: Int, total: Int) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Text(
-                text = "Today's Stops",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (total == 0) {
-                Text(
-                    text = "🎉  No limits reached yet — great job!",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                val progress = onTime.toFloat() / total.toFloat()
-                val stopWord = if (total == 1) "stop" else "stops"
-                val label = when {
-                    onTime == total -> "🌟  Perfect! All $total $stopWord on time!"
-                    onTime == 0     -> "💪  Try to stop faster next time"
-                    else            -> "👍  $onTime of $total $stopWord on time"
-                }
-
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(10.dp),
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "$onTime / $total",
+                    text = askBlockReason,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.End,
-                    modifier = Modifier.fillMaxWidth()
+                    textAlign = TextAlign.Center
                 )
+            }
+        } else {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column {
+                    limitedApps.forEachIndexed { index, app ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = app.appName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "+30 min extra",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = { onAsk(app.packageName, app.appName) },
+                                enabled = canAsk,
+                                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Text("Ask", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        if (index < limitedApps.lastIndex) {
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        }
+                    }
+                }
             }
         }
     }
