@@ -112,7 +112,9 @@ The APK is output to `app/build/outputs/apk/debug/app-debug.apk`.
 
 ### 4. Install and grant permissions
 
-After installing on a device or emulator, open the app and:
+> **Important:** This app must be run on a physical Android device. It will not work on an emulator because it relies on `UsageStatsManager` and `TYPE_APPLICATION_OVERLAY`, which require real device context and are either unsupported or non-functional on emulators.
+
+After installing on a physical device, open the app and:
 
 1. Tap **I'm a Parent**
 2. Follow the **Grant Permission** prompt → this opens the system Usage Access settings screen
