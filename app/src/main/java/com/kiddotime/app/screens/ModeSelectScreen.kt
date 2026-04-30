@@ -68,7 +68,7 @@ fun ModeSelectScreen(
                     horizontalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.icon_mama),
+                        painter = painterResource(id = R.drawable.icon_parents),
                         contentDescription = null,
                         modifier = Modifier.size(48.dp)
                     )

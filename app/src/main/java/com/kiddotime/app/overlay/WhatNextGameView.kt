@@ -17,7 +17,7 @@ class WhatNextGameView(context: Context) : FrameLayout(context) {
         Activity("📚", "Book"),
         Activity("🧸", "Toys"),
         Activity("🍎", "Snack"),
-        Activity("🧼", "Wash Hands"),
+        Activity("🛝", "Play"),
         Activity("🤗", "Cuddle")
     )
 
